@@ -13,7 +13,7 @@ import { LoaderCircle } from 'lucide-vue-next';
         <Head title="Confirm password" />
 
         <Form method="post" :action="route('password.confirm')" reset-on-success v-slot="{ errors, processing }">
-            <div class="space-y-6">
+            <div class="p-6">
                 <div class="grid gap-2">
                     <Label htmlFor="password">Password</Label>
                     <Input

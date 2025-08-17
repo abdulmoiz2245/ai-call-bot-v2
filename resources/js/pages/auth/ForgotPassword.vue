@@ -21,7 +21,7 @@ defineProps<{
             {{ status }}
         </div>
 
-        <div class="space-y-6">
+        <div class="p-6">
             <Form method="post" :action="route('password.email')" v-slot="{ errors, processing }">
                 <div class="grid gap-2">
                     <Label for="email">Email address</Label>

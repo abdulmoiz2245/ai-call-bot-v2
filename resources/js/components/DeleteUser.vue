@@ -23,7 +23,7 @@ const passwordInput = ref<HTMLInputElement | null>(null);
 </script>
 
 <template>
-    <div class="space-y-6">
+    <div class="p-6">
         <HeadingSmall title="Delete account" description="Delete your account and all of its resources" />
         <div class="p-4 space-y-4 border border-red-100 rounded-lg bg-red-50 dark:border-red-200/10 dark:bg-red-700/10">
             <div class="relative space-y-0.5 text-red-600 dark:text-red-100">
@@ -43,7 +43,7 @@ const passwordInput = ref<HTMLInputElement | null>(null);
                         :options="{
                             preserveScroll: true,
                         }"
-                        class="space-y-6"
+                        class="p-6"
                         v-slot="{ errors, processing, reset, clearErrors }"
                     >
                         <DialogHeader class="space-y-3">

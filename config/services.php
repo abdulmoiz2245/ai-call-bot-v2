@@ -28,6 +28,32 @@ return [
         'key' => env('RESEND_KEY'),
     ],
 
+    'elevenlabs' => [
+        'api_key' => env('ELEVENLABS_API_KEY'),
+        'base_url' => env('ELEVENLABS_BASE_URL', 'https://api.elevenlabs.io/v1'),
+    ],
+
+    'twilio' => [
+        'account_sid' => env('TWILIO_ACCOUNT_SID'),
+        'auth_token' => env('TWILIO_AUTH_TOKEN'),
+        'from_number' => env('TWILIO_FROM_NUMBER'),
+        'webhook_url' => env('TWILIO_WEBHOOK_URL'),
+    ],
+
+    'call_gateway' => [
+        'default' => env('CALL_GATEWAY_DEFAULT', 'mock'),
+        'mock' => [
+            'class' => \App\Adapters\MockGatewayAdapter::class,
+        ],
+        'twilio' => [
+            'class' => \App\Adapters\TwilioGatewayAdapter::class,
+            'account_sid' => env('TWILIO_ACCOUNT_SID'),
+            'auth_token' => env('TWILIO_AUTH_TOKEN'),
+            'from_number' => env('TWILIO_FROM_NUMBER'),
+            'webhook_url' => env('TWILIO_WEBHOOK_URL'),
+        ],
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),

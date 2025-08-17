@@ -21,6 +21,11 @@ class User extends Authenticatable
         'name',
         'email',
         'password',
+        'company_id',
+        'role',
+        'is_active',
+        'last_login_at',
+        'permissions',
     ];
 
     /**
@@ -43,6 +48,46 @@ class User extends Authenticatable
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'permissions' => 'array',
+            'last_login_at' => 'datetime',
+            'is_active' => 'boolean',
         ];
+    }
+
+    // Relationships
+    public function company()
+    {
+        return $this->belongsTo(Company::class);
+    }
+
+    public function createdCampaigns()
+    {
+        return $this->hasMany(Campaign::class, 'created_by');
+    }
+
+    public function events()
+    {
+        return $this->hasMany(Event::class);
+    }
+
+    // Role helpers
+    public function isSuperAdmin(): bool
+    {
+        return $this->role === 'PARENT_SUPER_ADMIN';
+    }
+
+    public function isCompanyAdmin(): bool
+    {
+        return $this->role === 'COMPANY_ADMIN';
+    }
+
+    public function isAgent(): bool
+    {
+        return $this->role === 'AGENT';
+    }
+
+    public function isViewer(): bool
+    {
+        return $this->role === 'VIEWER';
     }
 }

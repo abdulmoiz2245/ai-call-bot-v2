@@ -27,7 +27,7 @@ const currentPasswordInput = ref<HTMLInputElement | null>(null);
         <Head title="Password settings" />
 
         <SettingsLayout>
-            <div class="space-y-6">
+            <div class="p-6">
                 <HeadingSmall title="Update password" description="Ensure your account is using a long, random password to stay secure" />
 
                 <Form
@@ -38,7 +38,7 @@ const currentPasswordInput = ref<HTMLInputElement | null>(null);
                     }"
                     reset-on-success
                     :reset-on-error="['password', 'password_confirmation', 'current_password']"
-                    class="space-y-6"
+                    class="p-6"
                     v-slot="{ errors, processing, recentlySuccessful }"
                 >
                     <div class="grid gap-2">
