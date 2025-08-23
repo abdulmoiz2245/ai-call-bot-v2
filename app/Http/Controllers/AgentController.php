@@ -3,12 +3,17 @@
 namespace App\Http\Controllers;
 
 use App\Models\Agent;
+use App\Services\ElevenLabsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Inertia\Inertia;
 
 class AgentController extends Controller
 {
+    public function __construct(
+        private ElevenLabsService $elevenLabsService
+    ) {}
+
     /**
      * Display a listing of the resource.
      */
@@ -48,8 +53,12 @@ class AgentController extends Controller
      */
     public function create()
     {
+        $user = Auth::user();
+        
         return Inertia::render('Agents/Create', [
             'voices' => $this->getAvailableVoices(),
+            'canConnectElevenLabs' => $user->isSuperAdmin(),
+            'elevenLabsAgents' => $user->isSuperAdmin() ? $this->elevenLabsService->getAgents() : [],
         ]);
     }
 
@@ -61,21 +70,39 @@ class AgentController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'role' => 'nullable|string|max:255',
+            'tone' => 'nullable|string|max:255',
+            'persona' => 'nullable|string',
             'voice_id' => 'required|string|max:100',
+            'language' => 'nullable|string|max:5',
             'voice_settings' => 'nullable|array',
             'system_prompt' => 'required|string',
             'greeting_message' => 'nullable|string',
             'closing_message' => 'nullable|string',
             'transfer_conditions' => 'nullable|array',
             'conversation_flow' => 'nullable|array',
+            'scripts' => 'nullable|array',
+            'settings' => 'nullable|array',
             'is_active' => 'boolean',
+            'elevenlabs_agent_id' => 'nullable|string',
+            'is_elevenlabs_connected' => 'boolean',
         ]);
+
+        // Only super admins can connect to ElevenLabs
+        if (!Auth::user()->isSuperAdmin()) {
+            unset($validated['elevenlabs_agent_id'], $validated['is_elevenlabs_connected']);
+        }
 
         $agent = Agent::create([
             ...$validated,
             'company_id' => $request->input('company_id'),
             'created_by' => Auth::id(),
         ]);
+
+        // Sync to ElevenLabs if connected and user is super admin
+        if ($agent->is_elevenlabs_connected && Auth::user()->isSuperAdmin()) {
+            $this->elevenLabsService->syncAgent($agent);
+        }
 
         return redirect()->route('agents.show', $agent)
             ->with('success', 'Agent created successfully.');
@@ -112,9 +139,13 @@ class AgentController extends Controller
      */
     public function edit(Agent $agent)
     {
+        $user = Auth::user();
+        
         return Inertia::render('Agents/Edit', [
             'agent' => $agent,
             'voices' => $this->getAvailableVoices(),
+            'canConnectElevenLabs' => $user->isSuperAdmin(),
+            'elevenLabsAgents' => $user->isSuperAdmin() ? $this->elevenLabsService->getAgents() : [],
         ]);
     }
 
@@ -126,17 +157,40 @@ class AgentController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'role' => 'nullable|string|max:255',
+            'tone' => 'nullable|string|max:255',
+            'persona' => 'nullable|string',
             'voice_id' => 'required|string|max:100',
+            'language' => 'nullable|string|max:5',
             'voice_settings' => 'nullable|array',
             'system_prompt' => 'required|string',
             'greeting_message' => 'nullable|string',
             'closing_message' => 'nullable|string',
             'transfer_conditions' => 'nullable|array',
             'conversation_flow' => 'nullable|array',
+            'scripts' => 'nullable|array',
+            'settings' => 'nullable|array',
             'is_active' => 'boolean',
+            'elevenlabs_agent_id' => 'nullable|string',
+            'is_elevenlabs_connected' => 'boolean',
         ]);
 
+        // Only super admins can modify ElevenLabs connection
+        if (!Auth::user()->isSuperAdmin()) {
+            unset($validated['elevenlabs_agent_id'], $validated['is_elevenlabs_connected']);
+        }
+
         $agent->update($validated);
+
+        // Sync to ElevenLabs if connected
+        if ($agent->is_elevenlabs_connected) {
+            $syncSuccess = $this->elevenLabsService->syncAgent($agent);
+            
+            if (!$syncSuccess && Auth::user()->isSuperAdmin()) {
+                return redirect()->route('agents.show', $agent)
+                    ->with('warning', 'Agent updated locally but failed to sync with ElevenLabs. Check logs for details.');
+            }
+        }
 
         return redirect()->route('agents.show', $agent)
             ->with('success', 'Agent updated successfully.');
@@ -217,14 +271,24 @@ class AgentController extends Controller
      */
     private function getAvailableVoices(): array
     {
-        // This would fetch from ElevenLabs API
-        // For now, return mock data
-        return [
-            ['id' => 'voice-1', 'name' => 'Sarah', 'language' => 'en-US', 'gender' => 'female'],
-            ['id' => 'voice-2', 'name' => 'John', 'language' => 'en-US', 'gender' => 'male'],
-            ['id' => 'voice-3', 'name' => 'Emma', 'language' => 'en-GB', 'gender' => 'female'],
-            ['id' => 'voice-4', 'name' => 'David', 'language' => 'en-GB', 'gender' => 'male'],
-        ];
+        // Fetch five English voices from ElevenLabs API
+        $voices = $this->elevenLabsService->getVoices([
+            'language' => 'en',
+            'limit' => 5
+        ]);
+
+        // Map to expected format
+        return collect($voices)
+            ->filter(fn($v) => str_starts_with($v['language'], 'en'))
+            ->take(5)
+            ->map(fn($v) => [
+            'id' => $v['voice_id'],
+            'name' => $v['name'],
+            'language' => $v['language'],
+            'gender' => $v['gender'] ?? null,
+            ])
+            ->values()
+            ->toArray();
     }
 
     /**
@@ -241,5 +305,75 @@ class AgentController extends Controller
         $successfulCalls = $totalCalls->whereIn('status', ['answered', 'voicemail']);
         
         return ($successfulCalls->count() / $totalCalls->count()) * 100;
+    }
+
+    /**
+     * Get ElevenLabs agents for connection
+     */
+    public function getElevenLabsAgents()
+    {
+        if (!Auth::user()->isSuperAdmin()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $agents = $this->elevenLabsService->getAgents();
+        
+        return response()->json(['agents' => $agents]);
+    }
+
+    /**
+     * Connect agent to ElevenLabs
+     */
+    public function connectToElevenLabs(Request $request, Agent $agent)
+    {
+        if (!Auth::user()->isSuperAdmin()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $validated = $request->validate([
+            'elevenlabs_agent_id' => 'required|string',
+        ]);
+
+        $agent->update([
+            'elevenlabs_agent_id' => $validated['elevenlabs_agent_id'],
+            'is_elevenlabs_connected' => true,
+        ]);
+
+        // Sync current settings to ElevenLabs
+        $syncSuccess = $this->elevenLabsService->syncAgent($agent);
+
+        if ($syncSuccess) {
+            return response()->json([
+                'success' => true,
+                'message' => 'Agent connected to ElevenLabs successfully'
+            ]);
+        } else {
+            return response()->json([
+                'success' => false,
+                'message' => 'Agent connected but failed to sync settings. Check logs for details.'
+            ], 422);
+        }
+    }
+
+    /**
+     * Disconnect agent from ElevenLabs
+     */
+    public function disconnectFromElevenLabs(Agent $agent)
+    {
+        if (!Auth::user()->isSuperAdmin()) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $agent->update([
+            'elevenlabs_agent_id' => null,
+            'is_elevenlabs_connected' => false,
+            'elevenlabs_settings' => null,
+            'elevenlabs_last_synced' => null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Agent disconnected from ElevenLabs successfully'
+        ]);
     }
 }

@@ -27,7 +27,7 @@
                 </div>
                 <div>
                     <h3 class="text-lg font-semibold text-blue-900">{{ user.company.name }}</h3>
-                    <p class="text-blue-700">{{ user.company.company_type?.name }} Company</p>
+                    <p class="text-blue-700">{{ user.company.companyType?.name }} Company</p>
                     <p class="text-sm text-blue-600">{{ user.role.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase()) }}</p>
                 </div>
                 </div>
@@ -145,7 +145,7 @@
             </div>
 
             <!-- E-commerce Orders Section (only for e-commerce companies) -->
-            <Card v-if="user?.company?.company_type?.slug === 'ecommerce'">
+            <Card v-if="user?.company?.companyType?.slug === 'ecommerce'">
             <CardHeader>
                 <CardTitle class="flex items-center">
                 <ShoppingCart class="mr-2 h-5 w-5" />

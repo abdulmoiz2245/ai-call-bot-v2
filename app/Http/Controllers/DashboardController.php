@@ -18,7 +18,7 @@ class DashboardController extends Controller
 {
     public function index()
     {
-        $user = Auth::user()->load(['company.company_type', 'company.settings']);
+        $user = Auth::user()->load(['company.companyType']);
         $companyId = $user->company_id;
 
         if ($user->isSuperAdmin()) {
@@ -46,7 +46,7 @@ class DashboardController extends Controller
 
             // Get recent orders if e-commerce company
             $recentOrders = [];
-            if ($user->company && $user->company->company_type && $user->company->company_type->slug === 'ecommerce') {
+            if ($user->company && $user->company->companyType && $user->company->companyType->slug === 'ecommerce') {
                 $recentOrders = Order::where('company_id', $companyId)
                     ->orderBy('created_at', 'desc')
                     ->limit(5)
@@ -161,6 +161,7 @@ class DashboardController extends Controller
             })
             ->sortByDesc('completion_rate')
             ->values()
-            ->take(10);
+            ->take(10)
+            ->toArray();
     }
 }

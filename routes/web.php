@@ -7,6 +7,7 @@ use App\Http\Controllers\AgentController;
 use App\Http\Controllers\CallController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\OrderController;
+use App\Http\Controllers\ImportController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -31,6 +32,12 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::post('contacts/import', [ContactController::class, 'import'])->name('contacts.import');
     Route::get('contacts/export', [ContactController::class, 'export'])->name('contacts.export');
     
+    // Import functionality
+    Route::get('import/create', [ImportController::class, 'create'])->name('import.create');
+    Route::post('import/parse-headers', [ImportController::class, 'parseHeaders'])->name('import.parse-headers');
+    Route::post('import/dry-run', [ImportController::class, 'dryRun'])->name('import.dry-run');
+    Route::post('import/import', [ImportController::class, 'import'])->name('import.import');
+    
     // Orders (E-commerce)
     Route::resource('orders', OrderController::class);
     Route::post('orders/import', [OrderController::class, 'import'])->name('orders.import');
@@ -41,6 +48,11 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::post('agents/{agent}/toggle-status', [AgentController::class, 'toggleStatus'])->name('agents.toggle-status');
     Route::post('agents/{agent}/test', [AgentController::class, 'test'])->name('agents.test');
     Route::post('agents/{agent}/clone', [AgentController::class, 'clone'])->name('agents.clone');
+    
+    // ElevenLabs Integration (Super Admin only)
+    Route::get('agents/elevenlabs/list', [AgentController::class, 'getElevenLabsAgents'])->name('agents.elevenlabs.list');
+    Route::post('agents/{agent}/elevenlabs/connect', [AgentController::class, 'connectToElevenLabs'])->name('agents.elevenlabs.connect');
+    Route::post('agents/{agent}/elevenlabs/disconnect', [AgentController::class, 'disconnectFromElevenLabs'])->name('agents.elevenlabs.disconnect');
     
     // Calls
     Route::resource('calls', CallController::class)->only(['index', 'show']);

@@ -55,6 +55,7 @@ class CampaignController extends Controller
 
         return Inertia::render('Campaigns/Create', [
             'agents' => $agents,
+            'companyId' => $companyId,
         ]);
     }
 

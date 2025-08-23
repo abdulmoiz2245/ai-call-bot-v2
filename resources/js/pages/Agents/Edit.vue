@@ -38,6 +38,24 @@
                 </div>
                 
                 <div class="space-y-2">
+                    <Label for="role">Agent Role</Label>
+                    <Select v-model="form.role">
+                    <SelectTrigger :class="{ 'border-red-500': errors.role }">
+                        <SelectValue placeholder="Select a role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="sales">Sales Agent</SelectItem>
+                        <SelectItem value="support">Support Agent</SelectItem>
+                        <SelectItem value="lead_qualification">Lead Qualification</SelectItem>
+                        <SelectItem value="appointment_booking">Appointment Booking</SelectItem>
+                        <SelectItem value="customer_service">Customer Service</SelectItem>
+                        <SelectItem value="surveys">Survey & Feedback</SelectItem>
+                    </SelectContent>
+                    </Select>
+                    <div v-if="errors.role" class="text-red-500 text-sm">{{ errors.role }}</div>
+                </div>
+
+                <div class="space-y-2">
                     <Label for="voice">Voice</Label>
                     <Select v-model="form.voice_id" required>
                     <SelectTrigger :class="{ 'border-red-500': errors.voice_id }">
@@ -55,6 +73,38 @@
                     </Select>
                     <div v-if="errors.voice_id" class="text-red-500 text-sm">{{ errors.voice_id }}</div>
                 </div>
+
+                <div class="space-y-2">
+                    <Label for="tone">Agent Tone</Label>
+                    <Select v-model="form.tone">
+                    <SelectTrigger>
+                        <SelectValue placeholder="Professional" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="professional">Professional</SelectItem>
+                        <SelectItem value="friendly">Friendly</SelectItem>
+                        <SelectItem value="casual">Casual</SelectItem>
+                        <SelectItem value="formal">Formal</SelectItem>
+                        <SelectItem value="enthusiastic">Enthusiastic</SelectItem>
+                    </SelectContent>
+                    </Select>
+                </div>
+
+                <div class="space-y-2">
+                    <Label for="language">Language</Label>
+                    <Select v-model="form.language">
+                    <SelectTrigger>
+                        <SelectValue placeholder="English" />
+                    </SelectTrigger>
+                    <SelectContent>
+                        <SelectItem value="en">English</SelectItem>
+                        <SelectItem value="es">Spanish</SelectItem>
+                        <SelectItem value="fr">French</SelectItem>
+                        <SelectItem value="de">German</SelectItem>
+                        <SelectItem value="it">Italian</SelectItem>
+                    </SelectContent>
+                    </Select>
+                </div>
                 </div>
 
                 <div class="mt-6 space-y-2">
@@ -66,13 +116,26 @@
                     rows="3"
                 />
                 </div>
+
+                <div class="mt-6 space-y-2">
+                <Label for="persona">Agent Persona</Label>
+                <Textarea
+                    id="persona"
+                    v-model="form.persona"
+                    placeholder="Describe the agent's personality and characteristics..."
+                    rows="3"
+                />
+                <p class="text-sm text-muted-foreground">
+                    How should the agent present itself? (e.g., helpful, knowledgeable, empathetic)
+                </p>
+                </div>
             </div>
 
             <!-- System Prompt & Personality -->
             <div class="bg-white rounded-lg border p-6">
                 <h2 class="text-xl font-semibold mb-4">AI Configuration</h2>
                 
-                <div class="p-6">
+                <div class="space-y-6">
                 <div class="space-y-2">
                     <Label for="system_prompt">System Prompt</Label>
                     <Textarea
@@ -183,7 +246,7 @@
             <div class="bg-white rounded-lg border p-6">
                 <h2 class="text-xl font-semibold mb-4">Conversation Flow</h2>
                 
-                <div class="p-6">
+                <div class="space-y-6">
                 <!-- Transfer Conditions -->
                 <div>
                     <Label class="text-base font-medium">Transfer to Human Conditions</Label>
@@ -233,6 +296,45 @@
                     <p class="text-sm text-muted-foreground">
                     Any specific rules, responses, or behaviors unique to this agent
                     </p>
+                </div>
+                </div>
+            </div>
+
+            <!-- ElevenLabs Integration (Super Admin Only) -->
+            <div v-if="canConnectElevenLabs" class="bg-white rounded-lg border p-6">
+                <h2 class="text-xl font-semibold mb-4">ElevenLabs Integration</h2>
+                
+                <div class="space-y-4">
+                <div v-if="agent.is_elevenlabs_connected" class="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
+                    <div class="flex items-center space-x-3">
+                    <div class="w-3 h-3 bg-green-500 rounded-full"></div>
+                    <div>
+                        <p class="font-medium text-green-800">Connected to ElevenLabs</p>
+                        <p class="text-sm text-green-600">Agent ID: {{ agent.elevenlabs_agent_id }}</p>
+                        <p v-if="agent.elevenlabs_last_synced" class="text-xs text-green-500">
+                        Last synced: {{ formatDate(agent.elevenlabs_last_synced) }}
+                        </p>
+                    </div>
+                    </div>
+                    <Button @click="disconnectFromElevenLabs" variant="outline" size="sm">
+                    Disconnect
+                    </Button>
+                </div>
+                
+                <div v-else class="space-y-3">
+                    <p class="text-sm text-muted-foreground">
+                    Connect this agent to an existing ElevenLabs conversational AI agent for advanced capabilities.
+                    </p>
+                    
+                    <Button 
+                    @click="showElevenLabsDialog = true" 
+                    type="button" 
+                    variant="outline" 
+                    class="w-full sm:w-auto"
+                    >
+                    <Zap class="w-4 h-4 mr-2" />
+                    Connect to ElevenLabs Agent
+                    </Button>
                 </div>
                 </div>
             </div>
@@ -315,6 +417,15 @@
             </div>
             </div>
         </div>
+
+        <!-- ElevenLabs Connection Dialog -->
+        <ElevenLabsConnectionDialog
+            v-model:open="showElevenLabsDialog"
+            :agent-id="agent.id"
+            :eleven-labs-agents="reactiveElevenLabsAgents"
+            @connected="handleElevenLabsConnection"
+            @refresh-agents="handleRefreshAgents"
+        />
     </AppLayout>    
 </template>
 
@@ -325,7 +436,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import AppLayout from '@/layouts/AppLayout.vue'
-
 import { Textarea } from '@/components/ui/textarea'
 import {
   Select,
@@ -341,13 +451,20 @@ import {
   Play,
   Save,
   Trash2,
+  Zap,
+  CheckCircle,
 } from 'lucide-vue-next'
+import ElevenLabsConnectionDialog from '@/components/ElevenLabsConnectionDialog.vue'
 
 interface Agent {
   id: number
   name: string
   description?: string
+  role?: string
+  tone?: string
+  persona?: string
   voice_id: string
+  language?: string
   voice_settings?: {
     speed?: string
     pitch?: string
@@ -360,7 +477,12 @@ interface Agent {
   conversation_flow?: {
     custom_instructions?: string
   }
+  scripts?: Record<string, string>
+  settings?: Record<string, any>
   is_active: boolean
+  elevenlabs_agent_id?: string
+  is_elevenlabs_connected?: boolean
+  elevenlabs_last_synced?: string
 }
 
 interface Voice {
@@ -370,16 +492,37 @@ interface Voice {
   gender: string
 }
 
+interface ElevenLabsAgent {
+  agent_id: string
+  name: string
+  prompt?: {
+    prompt: string
+  }
+  voice?: {
+    voice_id: string
+  }
+  language?: string
+}
+
 const props = defineProps<{
   agent: Agent
   voices: Voice[]
+  canConnectElevenLabs?: boolean
+  elevenLabsAgents?: ElevenLabsAgent[]
 }>()
+
+// Create a reactive copy of ElevenLabs agents that can be updated
+const reactiveElevenLabsAgents = ref<ElevenLabsAgent[]>(props.elevenLabsAgents || [])
 
 // Form state
 const form = useForm({
   name: props.agent.name,
   description: props.agent.description || '',
+  role: props.agent.role || '',
+  tone: props.agent.tone || 'professional',
+  persona: props.agent.persona || '',
   voice_id: props.agent.voice_id,
+  language: props.agent.language || 'en',
   voice_settings: {
     speed: props.agent.voice_settings?.speed || 'normal',
     pitch: props.agent.voice_settings?.pitch || 'normal',
@@ -390,7 +533,11 @@ const form = useForm({
   closing_message: props.agent.closing_message || '',
   transfer_conditions: props.agent.transfer_conditions || [],
   conversation_flow: props.agent.conversation_flow || {},
+  scripts: props.agent.scripts || {},
+  settings: props.agent.settings || {},
   is_active: props.agent.is_active,
+  elevenlabs_agent_id: props.agent.elevenlabs_agent_id || '',
+  is_elevenlabs_connected: props.agent.is_elevenlabs_connected || false,
 })
 
 // Additional reactive state
@@ -401,6 +548,7 @@ const transferConditions = reactive({
 })
 
 const customInstructions = ref('')
+const showElevenLabsDialog = ref(false)
 
 // Original form data for reset functionality
 const originalFormData = ref({})
@@ -408,6 +556,13 @@ const originalFormData = ref({})
 // Computed
 const processing = computed(() => form.processing)
 const errors = computed(() => form.errors)
+
+// Breadcrumbs
+const breadcrumbs = [
+  { title: 'Agents', href: route('agents.index') },
+  { title: props.agent.name, href: route('agents.show', props.agent.id) },
+  { title: 'Edit', href: '#' },
+]
 
 // Initialize transfer conditions and custom instructions
 onMounted(() => {
@@ -509,6 +664,36 @@ const previewChanges = () => {
 const deleteAgent = () => {
   if (confirm(`Are you sure you want to delete "${props.agent.name}"? This action cannot be undone and will affect any campaigns using this agent.`)) {
     router.delete(route('agents.destroy', props.agent.id))
+  }
+}
+
+const formatDate = (dateString: string | null) => {
+  if (!dateString) return 'Never'
+  return new Date(dateString).toLocaleString()
+}
+
+const disconnectFromElevenLabs = () => {
+  if (confirm('Are you sure you want to disconnect this agent from ElevenLabs? This will remove the connection but keep your local agent.')) {
+    router.post(route('agents.disconnect-elevenlabs', props.agent.id), {}, {
+      onSuccess: () => {
+        // The page will be refreshed with updated data
+      }
+    })
+  }
+}
+
+const handleElevenLabsConnection = (elevenLabsAgentId: string) => {
+  form.elevenlabs_agent_id = elevenLabsAgentId
+  form.is_elevenlabs_connected = true
+  showElevenLabsDialog.value = false
+}
+
+const handleRefreshAgents = (freshAgents: ElevenLabsAgent[]) => {
+  try {
+    // Update the reactive agents list directly
+    reactiveElevenLabsAgents.value = freshAgents
+  } catch (error) {
+    console.error('Failed to refresh ElevenLabs agents:', error)
   }
 }
 </script>

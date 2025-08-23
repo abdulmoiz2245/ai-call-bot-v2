@@ -126,6 +126,27 @@
                     <div v-if="errors.data_source_type" class="text-sm text-destructive">
                         {{ errors.data_source_type }}
                     </div>
+                    
+                    <!-- Import Data Section -->
+                    <div class="mt-6 p-4 bg-muted/50 rounded-lg border">
+                        <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h4 class="font-medium">Import Data</h4>
+                            <p class="text-sm text-muted-foreground">
+                            Import {{ getDataSourceLabel() }} data from CSV or Excel file
+                            </p>
+                        </div>
+                        <Button @click="showImportDialog = true" variant="outline" size="sm">
+                            <Upload class="mr-2 h-4 w-4" />
+                            Import Data
+                        </Button>
+                        </div>
+                        
+                        <div v-if="importedDataCount > 0" class="flex items-center text-sm text-green-600">
+                        <CheckCircle class="mr-2 h-4 w-4" />
+                        {{ importedDataCount }} records imported successfully
+                        </div>
+                    </div>
                     </div>
 
                     <!-- Call Settings -->
@@ -309,6 +330,14 @@
                 </CardContent>
             </Card>
         </div>
+        
+        <!-- Import Dialog -->
+        <ImportDialog
+            v-model:open="showImportDialog"
+            :data-type="form.data_source_type as 'contacts' | 'orders' | 'leads'"
+            :company-id="props.companyId"
+            @imported="handleImportComplete"
+        />
     </AppLayout>
 </template>
 
@@ -336,6 +365,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import ImportDialog from '@/components/ImportDialog.vue'
+import { Upload, CheckCircle } from 'lucide-vue-next'
 
 interface Agent {
   id: number
@@ -344,9 +375,14 @@ interface Agent {
 
 interface Props {
   agents: Agent[]
+  companyId: number
 }
 
 const props = defineProps<Props>()
+
+// Import dialog state
+const showImportDialog = ref(false)
+const importedDataCount = ref(0)
 
 const dataSources = [
   {
@@ -403,6 +439,16 @@ const filterCriteria = computed(() => {
   
   return criteria
 })
+
+function getDataSourceLabel() {
+  const source = dataSources.find(s => s.value === form.data_source_type)
+  return source ? source.label.toLowerCase() : 'data'
+}
+
+function handleImportComplete(result: any) {
+  importedDataCount.value = result.imported
+  showImportDialog.value = false
+}
 
 function submitForm() {
   // Update filter criteria before submitting

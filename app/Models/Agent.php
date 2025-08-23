@@ -22,12 +22,28 @@ class Agent extends Model
         'scripts',
         'settings',
         'is_active',
+        'system_prompt',
+        'greeting_message',
+        'closing_message',
+        'voice_settings',
+        'transfer_conditions',
+        'conversation_flow',
+        'elevenlabs_agent_id',
+        'is_elevenlabs_connected',
+        'elevenlabs_settings',
+        'elevenlabs_last_synced',
     ];
 
     protected $casts = [
         'scripts' => 'array',
         'settings' => 'array',
+        'voice_settings' => 'array',
+        'transfer_conditions' => 'array',
+        'conversation_flow' => 'array',
+        'elevenlabs_settings' => 'array',
         'is_active' => 'boolean',
+        'is_elevenlabs_connected' => 'boolean',
+        'elevenlabs_last_synced' => 'datetime',
     ];
 
     // Relationships

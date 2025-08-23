@@ -11,8 +11,10 @@ class Contact extends Model
 
     protected $fillable = [
         'company_id',
+        'campaign_id',
         'first_name',
         'last_name',
+        'name',
         'email',
         'phone',
         'tags',
@@ -24,6 +26,7 @@ class Contact extends Model
         'opt_out_reason',
         'custom_fields',
         'last_contacted_at',
+        'notes',
     ];
 
     protected $casts = [
