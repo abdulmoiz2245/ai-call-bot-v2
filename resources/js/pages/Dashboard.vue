@@ -1,7 +1,17 @@
 <script setup lang="ts">
 import AppLayout from '@/layouts/AppLayout.vue';
 import { type BreadcrumbItem } from '@/types';
-import { Head } from '@inertiajs/vue3';
+import { Head, router } from '@inertiajs/vue3';
+import { route } from 'ziggy-js'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import PlaceholderPattern from '../components/PlaceholderPattern.vue';
 
 const breadcrumbs: BreadcrumbItem[] = [
@@ -10,6 +20,55 @@ const breadcrumbs: BreadcrumbItem[] = [
         href: '/dashboard',
     },
 ];
+
+interface Campaign {
+  id: number
+  name: string
+  status: string
+  created_at: string
+}
+
+interface DashboardStats {
+  campaigns: {
+    total: number
+    active: number
+  }
+  calls: {
+    total: number
+    today: number
+    successful: number
+  }
+  contacts: {
+    total: number
+    new: number
+  }
+  success_rate: number
+  recent_campaigns: Campaign[]
+}
+
+interface Props {
+  stats: DashboardStats
+}
+
+defineProps<Props>()
+
+function formatNumber(num: number): string {
+  return new Intl.NumberFormat().format(num)
+}
+
+function formatDate(dateString: string): string {
+  return new Date(dateString).toLocaleDateString()
+}
+
+function getStatusVariant(status: string): "secondary" | "default" | "destructive" | "outline" {
+  const variants: Record<string, "secondary" | "default" | "destructive" | "outline"> = {
+    draft: 'secondary',
+    active: 'default',
+    paused: 'destructive',
+    completed: 'outline'
+  }
+  return variants[status] || 'secondary'
+}
 </script>
 
 <template>
@@ -280,67 +339,3 @@ const breadcrumbs: BreadcrumbItem[] = [
     </div>
   </AppLayout>
 </template>
-
-<script setup lang="ts">
-import { Head, router } from '@inertiajs/vue3'
-import { route } from 'ziggy-js'
-import AppLayout from '@/layouts/AppLayout.vue'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-
-interface Campaign {
-  id: number
-  name: string
-  status: string
-  created_at: string
-}
-
-interface DashboardStats {
-  campaigns: {
-    total: number
-    active: number
-  }
-  calls: {
-    total: number
-    today: number
-    successful: number
-  }
-  contacts: {
-    total: number
-    new: number
-  }
-  success_rate: number
-  recent_campaigns: Campaign[]
-}
-
-interface Props {
-  stats: DashboardStats
-}
-
-defineProps<Props>()
-
-function formatNumber(num: number): string {
-  return new Intl.NumberFormat().format(num)
-}
-
-function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString()
-}
-
-function getStatusVariant(status: string) {
-  const variants: Record<string, string> = {
-    draft: 'secondary',
-    active: 'default',
-    paused: 'destructive',
-    completed: 'outline'
-  }
-  return variants[status] || 'secondary'
-}
-</script>

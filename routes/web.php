@@ -8,6 +8,7 @@ use App\Http\Controllers\CallController;
 use App\Http\Controllers\AnalyticsController;
 use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ImportController;
+use App\Http\Controllers\VoiceCallController;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
 
@@ -47,12 +48,25 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::resource('agents', AgentController::class);
     Route::post('agents/{agent}/toggle-status', [AgentController::class, 'toggleStatus'])->name('agents.toggle-status');
     Route::post('agents/{agent}/test', [AgentController::class, 'test'])->name('agents.test');
+    Route::get('agents/{agent}/variables', [AgentController::class, 'getVariables'])->name('agents.variables');
+    Route::get('agents/{agent}/call-test', [AgentController::class, 'callTest'])->name('agents.call-test');
+    Route::post('agents/{agent}/voice-connection', [AgentController::class, 'getVoiceWebSocket'])->name('agents.voice-connection');
     Route::post('agents/{agent}/clone', [AgentController::class, 'clone'])->name('agents.clone');
     
     // ElevenLabs Integration (Super Admin only)
     Route::get('agents/elevenlabs/list', [AgentController::class, 'getElevenLabsAgents'])->name('agents.elevenlabs.list');
     Route::post('agents/{agent}/elevenlabs/connect', [AgentController::class, 'connectToElevenLabs'])->name('agents.elevenlabs.connect');
     Route::post('agents/{agent}/elevenlabs/disconnect', [AgentController::class, 'disconnectFromElevenLabs'])->name('agents.elevenlabs.disconnect');
+    
+    // Voice Calls (Laravel Reverb WebSocket)
+    Route::post('agents/{agent}/voice-call/initialize', [VoiceCallController::class, 'initialize'])->name('voice-call.initialize');
+    Route::post('voice-call/send-audio', [VoiceCallController::class, 'sendAudio'])->name('voice-call.send-audio');
+    Route::post('voice-call/end', [VoiceCallController::class, 'endCall'])->name('voice-call.end');
+    Route::get('voice-call/{sessionId}/status', [VoiceCallController::class, 'getSessionStatus'])->name('voice-call.status');
+    
+    // WebSocket Event Handlers (for client events)
+    Route::post('voice-call/websocket/audio', [VoiceCallController::class, 'handleWebSocketAudio'])->name('voice-call.websocket.audio');
+    Route::post('voice-call/websocket/end', [VoiceCallController::class, 'handleWebSocketEnd'])->name('voice-call.websocket.end');
     
     // Calls
     Route::resource('calls', CallController::class)->only(['index', 'show']);
@@ -69,6 +83,7 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
 
 // Webhook routes (no auth required)
 Route::post('webhooks/calls', [CallController::class, 'webhook'])->name('webhooks.calls');
+Route::post('webhooks/voice-call/metadata', [VoiceCallController::class, 'handleConversationMetadata'])->name('webhooks.voice-call.metadata');
 
 // TwiML routes (no auth required - for Twilio callbacks)
 Route::prefix('api/twiml')->name('twiml.')->group(function () {

@@ -282,6 +282,9 @@ class ElevenLabsService
     {
         $voiceSettings = $agent->voice_settings ?? [];
         
+        // Get processed prompt and greeting with default variables for sync
+        $processedPrompt = $agent->getProcessedSystemPrompt([]);
+        $processedGreeting = $agent->getProcessedGreetingMessage([]);
         
         return [
             'name' => $agent->name,
@@ -293,9 +296,9 @@ class ElevenLabsService
                     'speed' => max(0.7, (float)($voiceSettings['speed'] ?? 1.0))
                 ],
                 'agent' => [
-                    'first_message' => $agent->greeting_message,
+                    'first_message' => $processedGreeting,
                     'prompt' => [
-                        'prompt' => $agent->system_prompt,
+                        'prompt' => $processedPrompt,
                         // 'built_in_tools' => $this->mapAgentTools($agent),
                     ],
                 ],
@@ -447,6 +450,44 @@ class ElevenLabsService
                 'error' => $e->getMessage()
             ]);
             return false;
+        }
+    }
+
+    /**
+     * Get ElevenLabs Conversational AI WebSocket URL for real-time conversation
+     */
+    public function getConversationalWebSocketUrl(Agent $agent, array $variables = []): ?array
+    {
+        try {
+            // Check if agent has ElevenLabs agent ID
+            if (!$agent->elevenlabs_agent_id) {
+                throw new \Exception('Agent is not connected to ElevenLabs');
+            }
+
+            // For ElevenLabs Conversational AI, we connect directly via WebSocket
+            // The WebSocket URL format is: wss://api.elevenlabs.io/v1/convai/conversation?agent_id={agent_id}
+            $websocketUrl = 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=' . $agent->elevenlabs_agent_id;
+
+            // Generate a unique session ID for this conversation
+            $sessionId = uniqid('conv_' . $agent->elevenlabs_agent_id . '_');
+
+            return [
+                'url' => $websocketUrl,
+                'session_id' => $sessionId,
+                'agent_id' => $agent->elevenlabs_agent_id,
+                'api_key' => $this->apiKey, // Will be used for authentication in WebSocket headers
+                'expires_at' => now()->addHours(2)->toISOString()
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Failed to get ElevenLabs WebSocket URL', [
+                'agent_id' => $agent->id,
+                'elevenlabs_agent_id' => $agent->elevenlabs_agent_id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return null;
         }
     }
 }

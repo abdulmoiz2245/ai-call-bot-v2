@@ -258,37 +258,12 @@
             </div>
             </div>
 
-            <!-- Test Agent Dialog -->
-            <Dialog v-model:open="showTestDialog">
-            <DialogContent class="sm:max-w-md">
-                <DialogHeader>
-                <DialogTitle>Test {{ agent.name }}</DialogTitle>
-                <DialogDescription>
-                    Test the agent with a sample conversation
-                </DialogDescription>
-                </DialogHeader>
-                <div class="space-y-4">
-                <div>
-                    <Label for="test-message">Test Message</Label>
-                    <Textarea
-                    id="test-message"
-                    v-model="testMessage"
-                    placeholder="Hi, I'm interested in your services..."
-                    rows="3"
-                    />
-                </div>
-                <div class="flex justify-end space-x-2">
-                    <Button @click="showTestDialog = false" variant="outline">
-                    Cancel
-                    </Button>
-                    <Button @click="runTest" :disabled="!testMessage.trim()">
-                    <Play class="w-4 h-4 mr-2" />
-                    Test Agent
-                    </Button>
-                </div>
-                </div>
-            </DialogContent>
-            </Dialog>
+            <!-- Enhanced Test Agent Dialog -->
+            <AgentTestDialog 
+              v-model:open="showTestDialog"
+              :agent-id="agent.id"
+              :agent-name="agent.name"
+            />
         </div>
     </AppLayout>
 </template>
@@ -301,6 +276,7 @@ import AppLayout from '@/layouts/AppLayout.vue'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import AgentTestDialog from '@/components/AgentTestDialog.vue'
 import {
   Select,
   SelectContent,
@@ -316,13 +292,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -401,7 +370,6 @@ const breadcrumbs = [
 
 // Reactive state
 const showTestDialog = ref(false)
-const testMessage = ref('')
 
 // Voice mapping
 const voices = {
@@ -413,21 +381,7 @@ const voices = {
 
 // Methods
 const testAgent = () => {
-  testMessage.value = ''
   showTestDialog.value = true
-}
-
-const runTest = () => {
-  if (!testMessage.value.trim()) return
-
-  router.post(route('agents.test', props.agent.id), {
-    test_message: testMessage.value,
-  }, {
-    onSuccess: () => {
-      showTestDialog.value = false
-      testMessage.value = ''
-    },
-  })
 }
 
 const cloneAgent = () => {

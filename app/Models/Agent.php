@@ -66,4 +66,66 @@ class Agent extends Model
     {
         return $this->hasMany(Call::class);
     }
+
+    /**
+     * Extract variables from text with {{variable_name}} pattern
+     */
+    public function extractVariables(string $text): array
+    {
+        preg_match_all('/\{\{([^}]+)\}\}/', $text, $matches);
+        return array_unique($matches[1]);
+    }
+
+    /**
+     * Get all variables used in system prompt and greeting message
+     */
+    public function getAllVariables(): array
+    {
+        $variables = [];
+        
+        if ($this->system_prompt) {
+            $variables = array_merge($variables, $this->extractVariables($this->system_prompt));
+        }
+        
+        if ($this->greeting_message) {
+            $variables = array_merge($variables, $this->extractVariables($this->greeting_message));
+        }
+        
+        return array_unique($variables);
+    }
+
+    /**
+     * Replace variables in text with provided values
+     */
+    public function replaceVariables(string $text, array $variables): string
+    {
+        foreach ($variables as $key => $value) {
+            $text = str_replace("{{$key}}", $value, $text);
+        }
+        return $text;
+    }
+
+    /**
+     * Get processed system prompt with variables replaced
+     */
+    public function getProcessedSystemPrompt(array $variables = []): string
+    {
+        if (!$this->system_prompt) {
+            return '';
+        }
+        
+        return $this->replaceVariables($this->system_prompt, $variables);
+    }
+
+    /**
+     * Get processed greeting message with variables replaced
+     */
+    public function getProcessedGreetingMessage(array $variables = []): string
+    {
+        if (!$this->greeting_message) {
+            return '';
+        }
+        
+        return $this->replaceVariables($this->greeting_message, $variables);
+    }
 }

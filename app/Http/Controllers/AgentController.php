@@ -6,6 +6,7 @@ use App\Models\Agent;
 use App\Services\ElevenLabsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 
 class AgentController extends Controller
@@ -231,18 +232,56 @@ class AgentController extends Controller
     {
         $validated = $request->validate([
             'test_message' => 'required|string|max:500',
+            'variables' => 'nullable|array',
+            'variables.*' => 'nullable|string|max:255',
+            'preview_only' => 'nullable|boolean',
         ]);
 
+        // Get all variables used in the agent
+        $allVariables = $agent->getAllVariables();
+        $providedVariables = $validated['variables'] ?? [];
+        
+        // Process the system prompt and greeting with variables
+        $processedSystemPrompt = $agent->getProcessedSystemPrompt($providedVariables);
+        $processedGreeting = $agent->getProcessedGreetingMessage($providedVariables);
+
+        // If this is just a preview request, return the processed content
+        if ($validated['preview_only'] ?? false) {
+            return response()->json([
+                'processedSystemPrompt' => $processedSystemPrompt,
+                'processedGreeting' => $processedGreeting,
+                'variablesUsed' => $allVariables,
+                'providedVariables' => $providedVariables,
+            ]);
+        }
+
         // This would integrate with ElevenLabs API to test the agent
-        // For now, we'll return a mock response
+        // For now, we'll return a mock response with processed content
         
         $response = [
             'message' => 'This is a test response from the agent.',
             'voice_sample_url' => 'https://example.com/test-voice-sample.mp3',
             'processing_time' => 1.2,
+            'processed_system_prompt' => $processedSystemPrompt,
+            'processed_greeting' => $processedGreeting,
+            'variables_used' => $allVariables,
+            'provided_variables' => $providedVariables,
         ];
 
         return back()->with('test_result', $response);
+    }
+
+    /**
+     * Get variables used in agent prompts
+     */
+    public function getVariables(Agent $agent)
+    {
+        $variables = $agent->getAllVariables();
+        
+        return response()->json([
+            'success' => true,
+            'variables' => $variables,
+        ]);
     }
 
     /**
@@ -375,5 +414,97 @@ class AgentController extends Controller
             'success' => true,
             'message' => 'Agent disconnected from ElevenLabs successfully'
         ]);
+    }
+
+    /**
+     * Display the call test interface for an agent
+     */
+    public function callTest(Request $request, Agent $agent)
+    {
+        // Get variables from query parameters
+        $variables = $request->input('variables', []);
+        
+        // Process the agent with variables
+        $processedAgent = [
+            'id' => $agent->id,
+            'name' => $agent->name,
+            'description' => $agent->description,
+            'voice_id' => $agent->voice_id,
+            'company_name' => $agent->company->name ?? '',
+            'system_prompt' => $agent->getProcessedSystemPrompt($variables),
+            'greeting_message' => $agent->getProcessedGreetingMessage($variables),
+            'is_elevenlabs_connected' => !empty($agent->elevenlabs_agent_id),
+            'elevenlabs_agent_id' => $agent->elevenlabs_agent_id,
+            'variables' => $variables
+        ];
+
+        return Inertia::render('Agents/CallTest', [
+            'agent' => $processedAgent,
+            'variables' => $variables
+        ]);
+    }
+
+    /**
+     * Get voice WebSocket URL for real-time conversation
+     */
+    public function getVoiceWebSocket(Request $request, Agent $agent)
+    {
+        $validated = $request->validate([
+            'variables' => 'nullable|array',
+            'variables.*' => 'nullable|string|max:255',
+        ]);
+
+        $variables = $validated['variables'] ?? [];
+
+        try {
+            if ($agent->is_elevenlabs_connected && $agent->elevenlabs_agent_id) {
+                // Use ElevenLabs WebSocket for connected agents
+                $websocketData = $this->elevenLabsService->getConversationalWebSocketUrl($agent, $variables);
+                
+                if (!$websocketData) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Failed to get voice service WebSocket URL'
+                    ], 500);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'websocket_url' => $websocketData['url'],
+                    'session_id' => $websocketData['session_id'] ?? null,
+                    'agent_id' => $agent->elevenlabs_agent_id,
+                    'api_key' => $websocketData['api_key'] ?? null,
+                    'connection_type' => 'voice_service',
+                    'processed_prompts' => [
+                        'system_prompt' => $agent->getProcessedSystemPrompt($variables),
+                        'greeting_message' => $agent->getProcessedGreetingMessage($variables),
+                    ]
+                ]);
+            } else {
+                // Return custom WebSocket configuration for non-connected agents
+                return response()->json([
+                    'success' => true,
+                    'websocket_url' => config('app.websocket_url', 'ws://localhost:8080') . '/call-test/' . $agent->id,
+                    'session_id' => uniqid('session_'),
+                    'agent_id' => $agent->id,
+                    'connection_type' => 'custom',
+                    'processed_prompts' => [
+                        'system_prompt' => $agent->getProcessedSystemPrompt($variables),
+                        'greeting_message' => $agent->getProcessedGreetingMessage($variables),
+                    ]
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            Log::error('Failed to get voice WebSocket URL', [
+                'agent_id' => $agent->id,
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to initialize voice conversation: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }

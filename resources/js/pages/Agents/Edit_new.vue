@@ -147,7 +147,7 @@
                     required
                     />
                     <p class="text-sm text-muted-foreground">
-                    Define the agent's role, personality, and behavior guidelines. Use <code class="bg-muted px-1 rounded">{{ '{' }}{{ '{' }}variable_name{{ '}' }}{{ '}' }}</code> for custom variables.
+                    Define the agent's role, personality, and behavior guidelines
                     </p>
                     <div v-if="errors.system_prompt" class="text-red-500 text-sm">{{ errors.system_prompt }}</div>
                 </div>
@@ -158,11 +158,11 @@
                     <Textarea
                         id="greeting_message"
                         v-model="form.greeting_message"
-                        placeholder="Hi, this is {{agent_name}} from {{company_name}}..."
+                        placeholder="Hi, this is Sarah from ABC Company..."
                         rows="3"
                     />
                     <p class="text-sm text-muted-foreground">
-                        What the agent says when the call connects. Use <code class="bg-muted px-1 rounded">{{ '{' }}{{ '{' }}variable_name{{ '}' }}{{ '}' }}</code> for dynamic content.
+                        What the agent says when the call connects
                     </p>
                     </div>
 
@@ -300,45 +300,6 @@
                 </div>
             </div>
 
-            <!-- ElevenLabs Integration (Super Admin Only) -->
-            <div v-if="canConnectElevenLabs" class="bg-white rounded-lg border p-6">
-                <h2 class="text-xl font-semibold mb-4">ElevenLabs Integration</h2>
-                
-                <div class="space-y-4">
-                <div v-if="agent.is_elevenlabs_connected" class="flex items-center justify-between p-4 bg-green-50 border border-green-200 rounded-lg">
-                    <div class="flex items-center space-x-3">
-                    <div class="w-3 h-3 bg-green-500 rounded-full"></div>
-                    <div>
-                        <p class="font-medium text-green-800">Connected to ElevenLabs</p>
-                        <p class="text-sm text-green-600">Agent ID: {{ agent.elevenlabs_agent_id }}</p>
-                        <p v-if="agent.elevenlabs_last_synced" class="text-xs text-green-500">
-                        Last synced: {{ formatDate(agent.elevenlabs_last_synced) }}
-                        </p>
-                    </div>
-                    </div>
-                    <Button @click="disconnectFromElevenLabs" variant="outline" size="sm">
-                    Disconnect
-                    </Button>
-                </div>
-                
-                <div v-else class="space-y-3">
-                    <p class="text-sm text-muted-foreground">
-                    Connect this agent to an existing ElevenLabs conversational AI agent for advanced capabilities.
-                    </p>
-                    
-                    <Button 
-                    @click="showElevenLabsDialog = true" 
-                    type="button" 
-                    variant="outline" 
-                    class="w-full sm:w-auto"
-                    >
-                    <Zap class="w-4 h-4 mr-2" />
-                    Connect to ElevenLabs Agent
-                    </Button>
-                </div>
-                </div>
-            </div>
-
             <!-- Status -->
             <div class="bg-white rounded-lg border p-6">
                 <h2 class="text-xl font-semibold mb-4">Agent Status</h2>
@@ -417,15 +378,6 @@
             </div>
             </div>
         </div>
-
-        <!-- ElevenLabs Connection Dialog -->
-        <ElevenLabsConnectionDialog
-            v-model:open="showElevenLabsDialog"
-            :agent-id="agent.id"
-            :eleven-labs-agents="reactiveElevenLabsAgents"
-            @connected="handleElevenLabsConnection"
-            @refresh-agents="handleRefreshAgents"
-        />
     </AppLayout>    
 </template>
 
@@ -451,10 +403,7 @@ import {
   Play,
   Save,
   Trash2,
-  Zap,
-  CheckCircle,
 } from 'lucide-vue-next'
-import ElevenLabsConnectionDialog from '@/components/ElevenLabsConnectionDialog.vue'
 
 interface Agent {
   id: number
@@ -480,9 +429,6 @@ interface Agent {
   scripts?: Record<string, string>
   settings?: Record<string, any>
   is_active: boolean
-  elevenlabs_agent_id?: string
-  is_elevenlabs_connected?: boolean
-  elevenlabs_last_synced?: string
 }
 
 interface Voice {
@@ -492,27 +438,10 @@ interface Voice {
   gender: string
 }
 
-interface ElevenLabsAgent {
-  agent_id: string
-  name: string
-  prompt?: {
-    prompt: string
-  }
-  voice?: {
-    voice_id: string
-  }
-  language?: string
-}
-
 const props = defineProps<{
   agent: Agent
   voices: Voice[]
-  canConnectElevenLabs?: boolean
-  elevenLabsAgents?: ElevenLabsAgent[]
 }>()
-
-// Create a reactive copy of ElevenLabs agents that can be updated
-const reactiveElevenLabsAgents = ref<ElevenLabsAgent[]>(props.elevenLabsAgents || [])
 
 // Form state
 const form = useForm({
@@ -536,8 +465,6 @@ const form = useForm({
   scripts: props.agent.scripts || {},
   settings: props.agent.settings || {},
   is_active: props.agent.is_active,
-  elevenlabs_agent_id: props.agent.elevenlabs_agent_id || '',
-  is_elevenlabs_connected: props.agent.is_elevenlabs_connected || false,
 })
 
 // Additional reactive state
@@ -548,7 +475,6 @@ const transferConditions = reactive({
 })
 
 const customInstructions = ref('')
-const showElevenLabsDialog = ref(false)
 
 // Original form data for reset functionality
 const originalFormData = ref({})
@@ -559,9 +485,9 @@ const errors = computed(() => form.errors)
 
 // Breadcrumbs
 const breadcrumbs = [
-  { title: 'Agents', href: route('agents.index') },
-  { title: props.agent.name, href: route('agents.show', props.agent.id) },
-  { title: 'Edit', href: '#' },
+  { name: 'Agents', href: route('agents.index') },
+  { name: props.agent.name, href: route('agents.show', props.agent.id) },
+  { name: 'Edit', href: '#' },
 ]
 
 // Initialize transfer conditions and custom instructions
@@ -664,36 +590,6 @@ const previewChanges = () => {
 const deleteAgent = () => {
   if (confirm(`Are you sure you want to delete "${props.agent.name}"? This action cannot be undone and will affect any campaigns using this agent.`)) {
     router.delete(route('agents.destroy', props.agent.id))
-  }
-}
-
-const formatDate = (dateString: string | null) => {
-  if (!dateString) return 'Never'
-  return new Date(dateString).toLocaleString()
-}
-
-const disconnectFromElevenLabs = () => {
-  if (confirm('Are you sure you want to disconnect this agent from ElevenLabs? This will remove the connection but keep your local agent.')) {
-    router.post(route('agents.disconnect-elevenlabs', props.agent.id), {}, {
-      onSuccess: () => {
-        // The page will be refreshed with updated data
-      }
-    })
-  }
-}
-
-const handleElevenLabsConnection = (elevenLabsAgentId: string) => {
-  form.elevenlabs_agent_id = elevenLabsAgentId
-  form.is_elevenlabs_connected = true
-  showElevenLabsDialog.value = false
-}
-
-const handleRefreshAgents = (freshAgents: ElevenLabsAgent[]) => {
-  try {
-    // Update the reactive agents list directly
-    reactiveElevenLabsAgents.value = freshAgents
-  } catch (error) {
-    console.error('Failed to refresh ElevenLabs agents:', error)
   }
 }
 </script>

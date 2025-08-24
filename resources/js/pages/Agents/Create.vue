@@ -148,7 +148,7 @@
               required
             />
             <p class="text-sm text-muted-foreground">
-              Define the agent's role, personality, and behavior guidelines
+              Define the agent's role, personality, and behavior guidelines. Use <code class="bg-muted px-1 rounded">{{ '{' }}{{ '{' }}variable_name{{ '}' }}{{ '}' }}</code> for custom variables.
             </p>
             <div v-if="errors.system_prompt" class="text-red-500 text-sm">{{ errors.system_prompt }}</div>
           </div>
@@ -159,11 +159,11 @@
               <Textarea
                 id="greeting_message"
                 v-model="form.greeting_message"
-                placeholder="Hi, this is Sarah from ABC Company..."
+                placeholder="Hi, this is {{agent_name}} from {{company_name}}..."
                 rows="3"
               />
               <p class="text-sm text-muted-foreground">
-                What the agent says when the call connects
+                What the agent says when the call connects. Use <code class="bg-muted px-1 rounded">{{ '{' }}{{ '{' }}variable_name{{ '}' }}{{ '}' }}</code> for dynamic content.
               </p>
             </div>
 
