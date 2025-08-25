@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Agent;
 use App\Services\VoiceCallService;
+use App\Events\VoiceCallStatusUpdated;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -60,7 +61,7 @@ class VoiceCallController extends Controller
                 ], 500);
             }
 
-            return response()->json([
+            $response = response()->json([
                 'success' => true,
                 'session_id' => $sessionData['session_id'],
                 'channel_name' => $channelName,
@@ -72,6 +73,8 @@ class VoiceCallController extends Controller
                 ],
                 'message' => 'Voice call session initialized successfully'
             ]);
+
+            return $response;
 
         } catch (\Exception $e) {
             Log::error('Failed to initialize voice call', [
@@ -141,6 +144,98 @@ class VoiceCallController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to process audio data'
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle audio chunks via private channel broadcasting
+     */
+    public function sendAudioChunk(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string',
+            'audio_data' => 'required|string',
+            'user_id' => 'required|integer',
+            'timestamp' => 'required|integer'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid audio chunk data',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            $audioData = $request->input('audio_data');
+            $userId = $request->input('user_id');
+            $timestamp = $request->input('timestamp');
+
+            // Get session data
+            $sessionData = $this->voiceCallService->getSessionData($sessionId);
+            if (!$sessionData) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid session'
+                ], 404);
+            }
+
+            // Process audio with ElevenLabs and get response
+            $aiResponse = $this->voiceCallService->processAudioChunk($sessionId, $audioData, [
+                'user_id' => $userId,
+                'timestamp' => $timestamp
+            ]);
+
+            // Broadcast incoming audio to private channel
+            broadcast(new \App\Events\VoiceCallAudioEvent(
+                $sessionId,
+                $audioData,
+                'incoming',
+                [
+                    'user_id' => $userId,
+                    'timestamp' => $timestamp,
+                    'audio_length' => strlen($audioData)
+                ]
+            ));
+
+            $response = [
+                'success' => true,
+                'message' => 'Audio chunk processed successfully',
+                'session_id' => $sessionId
+            ];
+
+            // If we received an AI response, broadcast it and include in response
+            if ($aiResponse && isset($aiResponse['audio_base64'])) {
+                // Broadcast AI response audio to private channel
+                broadcast(new \App\Events\VoiceCallAudioEvent(
+                    $sessionId,
+                    $aiResponse['audio_base64'],
+                    'outgoing',
+                    [
+                        'response_type' => $aiResponse['type'] ?? 'audio',
+                        'transcript' => $aiResponse['transcript'] ?? null,
+                        'timestamp' => time()
+                    ]
+                ));
+
+                $response['ai_response'] = $aiResponse;
+            }
+
+            return response()->json($response);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to process audio chunk', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process audio chunk'
             ], 500);
         }
     }
@@ -353,6 +448,225 @@ class VoiceCallController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to end call'
+            ], 500);
+        }
+    }
+
+    /**
+     * Trigger connected status broadcast (called after frontend subscribes to channel)
+     */
+    public function triggerConnectedStatus(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid session ID',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            
+            // Get session data
+            $sessionData = $this->voiceCallService->getSessionData($sessionId);
+            if (!$sessionData) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Session not found'
+                ], 404);
+            }
+
+            // Broadcast connected status immediately since frontend is already subscribed
+            $event = new \App\Events\VoiceCallStatusUpdated(
+                $sessionData['channel_name'], 
+                'connected',
+                'Connected to voice AI service'
+            );
+
+            $result = broadcast($event);
+
+            Log::info('Connected status broadcast triggered manually', [
+                'session_id' => $sessionId,
+                'channel_name' => $sessionData['channel_name'],
+                'result' => $result
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Connected status broadcast sent successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to trigger connected status', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to trigger connected status'
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle WebSocket audio data received via whisper events
+     */
+    public function handleWhisperAudio(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string',
+            'audio_data' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid parameters',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            $audioData = $request->input('audio_data');
+            
+            $this->voiceCallService->handleAudioData($sessionId, $audioData);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Audio data processed successfully'
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to handle whisper audio', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process audio data'
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle WebSocket end call received via whisper events
+     */
+    public function handleWhisperEndCall(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string',
+            'reason' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid parameters',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            $reason = $request->input('reason', 'client_ended');
+            
+            $this->voiceCallService->endCall($sessionId, $reason);
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Call ended successfully'
+            ]);
+            
+        } catch (\Exception $e) {
+            Log::error('Failed to handle whisper end call', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to end call'
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle audio chunks via WebSocket and broadcast to private channel
+     */
+    public function handleAudioChunk(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string',
+            'audio_data' => 'required|string',
+            'user_id' => 'sometimes|integer'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid audio chunk data',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            $audioData = $request->input('audio_data');
+            $userId = $request->input('user_id');
+
+            // Process audio chunk through service
+            $aiResponse = $this->voiceCallService->processAudioChunk($sessionId, $audioData, [
+                'user_id' => $userId,
+                'timestamp' => time(),
+                'source' => 'websocket'
+            ]);
+
+            // Broadcast incoming audio to private channel
+            broadcast(new \App\Events\VoiceCallAudioEvent(
+                $sessionId,
+                $audioData,
+                'incoming',
+                ['user_id' => $userId, 'timestamp' => time()]
+            ));
+
+            // If AI responded, broadcast the response audio
+            if ($aiResponse && isset($aiResponse['audio_base64'])) {
+                broadcast(new \App\Events\VoiceCallAudioEvent(
+                    $sessionId,
+                    $aiResponse['audio_base64'],
+                    'outgoing',
+                    [
+                        'type' => $aiResponse['type'] ?? 'ai_response',
+                        'transcript' => $aiResponse['transcript'] ?? null,
+                        'timestamp' => time()
+                    ]
+                ));
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Audio chunk processed successfully',
+                'ai_response' => $aiResponse
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to handle audio chunk', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process audio chunk'
             ], 500);
         }
     }

@@ -2,7 +2,7 @@ import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
 
 // Make Pusher available globally for Laravel Echo
-window.Pusher = Pusher
+// window.Pusher = Pusher
 
 // Configure Laravel Echo for Reverb
 const echo = new Echo({
@@ -13,6 +13,15 @@ const echo = new Echo({
   wssPort: import.meta.env.VITE_REVERB_PORT ?? 443,
   forceTLS: (import.meta.env.VITE_REVERB_SCHEME ?? 'https') === 'https',
   enabledTransports: ['ws', 'wss'],
+  // Authentication configuration for private/presence channels
+  authEndpoint: '/broadcasting/auth',
+  auth: {
+    headers: {
+      'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+    },
+  },
 })
+
+console.log(echo)
 
 export default echo

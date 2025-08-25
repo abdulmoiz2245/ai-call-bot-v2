@@ -6,6 +6,7 @@ use App\Models\Agent;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Auth;
 use React\EventLoop\Loop;
 use React\Socket\Connector;
 use React\Stream\WritableResourceStream;
@@ -118,16 +119,18 @@ class VoiceCallService
         ];
 
         // Update session status
-        $this->updateSessionStatus($sessionId, 'elevenlabs_connected');
+        $this->updateSessionStatus($sessionId, 'connected');
 
-        // Broadcast connection success to the channel
+        // Connected status will be triggered manually after frontend subscribes
         $sessionData = $this->getSessionData($sessionId);
         if ($sessionData) {
-            broadcast(new \App\Events\VoiceCallStatusUpdated(
-                $sessionData['channel_name'], 
-                'elevenlabs_connected',
-                'Connected to voice AI service'
-            ));
+            Log::info('WebSocket connection established, ready for manual connected status trigger', [
+                'session_id' => $sessionId,
+                'channel_name' => $sessionData['channel_name'],
+                'status' => 'ready'
+            ]);
+        } else {
+            Log::error('No session data found for connection', ['session_id' => $sessionId]);
         }
     }
 
@@ -238,6 +241,131 @@ class VoiceCallService
                 'conversation_initiation_metadata_event' => $metadata
             ]
         ));
+    }
+
+    /**
+     * Process audio chunk from WebRTC and get AI response
+     */
+    public function processAudioChunk(string $sessionId, string $audioData, array $metadata = []): ?array
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData) {
+            Log::error('Session not found for audio processing', ['session_id' => $sessionId]);
+            return null;
+        }
+
+        try {
+            // Store the audio chunk for multi-user access
+            $this->storeAudioChunk($sessionId, $audioData, 'incoming', $metadata);
+
+            // Send audio to ElevenLabs for processing (if connected)
+            $aiResponse = $this->sendAudioToElevenLabsWebSocket($sessionId, $audioData);
+
+            // If we get an AI response, store it too
+            if ($aiResponse && isset($aiResponse['audio_base64'])) {
+                $this->storeAudioChunk($sessionId, $aiResponse['audio_base64'], 'outgoing', [
+                    'type' => $aiResponse['type'] ?? 'ai_response',
+                    'transcript' => $aiResponse['transcript'] ?? null,
+                    'timestamp' => time()
+                ]);
+            }
+
+            Log::info('Audio chunk processed', [
+                'session_id' => $sessionId,
+                'input_audio_length' => strlen($audioData),
+                'has_ai_response' => !empty($aiResponse),
+                'user_id' => $metadata['user_id'] ?? null
+            ]);
+
+            return $aiResponse;
+
+        } catch (\Exception $e) {
+            Log::error('Failed to process audio chunk', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Store audio chunk for multi-user access
+     */
+    private function storeAudioChunk(string $sessionId, string $audioData, string $direction, array $metadata = []): void
+    {
+        $chunkId = uniqid('chunk_');
+        $timestamp = time();
+
+        $chunkData = [
+            'chunk_id' => $chunkId,
+            'session_id' => $sessionId,
+            'audio_data' => $audioData,
+            'direction' => $direction, // 'incoming' or 'outgoing'
+            'metadata' => $metadata,
+            'timestamp' => $timestamp,
+            'created_at' => now()->toISOString()
+        ];
+
+        // Store individual chunk
+        Redis::setex("audio_chunk:{$sessionId}:{$chunkId}", 7200, json_encode($chunkData)); // 2 hours
+
+        // Add to session's audio log
+        $logKey = "audio_log:{$sessionId}";
+        Redis::lpush($logKey, json_encode([
+            'chunk_id' => $chunkId,
+            'direction' => $direction,
+            'timestamp' => $timestamp,
+            'size' => strlen($audioData),
+            'user_id' => $metadata['user_id'] ?? null
+        ]));
+        Redis::expire($logKey, 7200); // 2 hours
+    }
+
+    /**
+     * Get audio chunks for a session (for multi-user access)
+     */
+    public function getSessionAudioChunks(string $sessionId, int $limit = 100): array
+    {
+        $logKey = "audio_log:{$sessionId}";
+        $logEntries = Redis::lrange($logKey, 0, $limit - 1);
+
+        $chunks = [];
+        foreach ($logEntries as $entry) {
+            $logData = json_decode($entry, true);
+            if ($logData) {
+                $chunkData = Redis::get("audio_chunk:{$sessionId}:{$logData['chunk_id']}");
+                if ($chunkData) {
+                    $chunks[] = json_decode($chunkData, true);
+                }
+            }
+        }
+
+        return array_reverse($chunks); // Return in chronological order
+    }
+
+    /**
+     * Send audio to ElevenLabs WebSocket
+     */
+    private function sendAudioToElevenLabsWebSocket(string $sessionId, string $audioData): ?array
+    {
+        // For now, simulate AI response
+        // In production, this would send to the actual ElevenLabs WebSocket connection
+        $responses = [
+            [
+                'type' => 'audio',
+                'audio_base64' => base64_encode('simulated_ai_response_' . time()),
+                'transcript' => 'Thank you for your message. How can I assist you further?'
+            ],
+            [
+                'type' => 'audio',
+                'audio_base64' => base64_encode('simulated_ai_response_' . time()),
+                'transcript' => 'I understand. Let me help you with that.'
+            ]
+        ];
+
+        // Randomly return a response or null (to simulate when AI doesn't respond)
+        return rand(0, 1) ? $responses[array_rand($responses)] : null;
     }
 
     /**
@@ -370,7 +498,7 @@ class VoiceCallService
 
         try {
             // End the call
-            $this->endCall($sessionId);
+            $this->endSession($sessionId);
             
             // Broadcast call ended event
             broadcast(new \App\Events\VoiceCallStatusUpdated(
@@ -391,6 +519,135 @@ class VoiceCallService
                 'error' => $e->getMessage()
             ]);
             return false;
+        }
+    }
+
+    /**
+     * Execute pending broadcast for a session (to be called after HTTP response)
+     */
+    public function executePendingBroadcast(string $sessionId): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData || !isset($sessionData['pending_broadcast'])) {
+            return;
+        }
+
+        $broadcastData = $sessionData['pending_broadcast'];
+        
+        Log::info('Executing pending broadcast', [
+            'session_id' => $sessionId,
+            'channel_name' => $sessionData['channel_name'],
+            'broadcast_data' => $broadcastData
+        ]);
+
+        $event = new \App\Events\VoiceCallStatusUpdated(
+            $sessionData['channel_name'], 
+            $broadcastData['type'],
+            $broadcastData['message']
+        );
+        
+        try {
+            $result = broadcast($event);
+            
+            Log::info('Pending broadcast executed successfully', [
+                'session_id' => $sessionId,
+                'channel_name' => $sessionData['channel_name'],
+                'result' => $result
+            ]);
+            
+            // Clear the pending broadcast
+            unset($sessionData['pending_broadcast']);
+            $this->updateSessionData($sessionId, $sessionData);
+            
+        } catch (\Exception $broadcastException) {
+            Log::error('Pending broadcast failed', [
+                'session_id' => $sessionId,
+                'channel_name' => $sessionData['channel_name'],
+                'error' => $broadcastException->getMessage()
+            ]);
+        }
+    }
+
+    /**
+     * Handle audio data received from WebSocket client events
+     */
+    public function handleAudioData(string $sessionId, string $audioData): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData) {
+            Log::error('Session not found for audio data', ['session_id' => $sessionId]);
+            return;
+        }
+
+        Log::info('Handling WebSocket audio data', [
+            'session_id' => $sessionId,
+            'audio_data_size' => strlen($audioData)
+        ]);
+
+        // If ElevenLabs WebSocket is connected, send audio data
+        if (isset($sessionData['elevenlabs_websocket_url'])) {
+            try {
+                $this->sendAudioToElevenLabs($sessionId, $audioData);
+            } catch (\Exception $e) {
+                Log::error('Failed to send audio to ElevenLabs', [
+                    'session_id' => $sessionId,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        } else {
+            Log::warning('ElevenLabs WebSocket not ready for audio data', [
+                'session_id' => $sessionId
+            ]);
+        }
+    }
+
+    /**
+     * Handle call end request from WebSocket client events
+     */
+    public function endCall(string $sessionId, string $reason = 'client_ended'): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData) {
+            Log::error('Session not found for end call', ['session_id' => $sessionId]);
+            return;
+        }
+
+        Log::info('Ending call via WebSocket client event', [
+            'session_id' => $sessionId,
+            'reason' => $reason
+        ]);
+
+        try {
+            // Update session status
+            $sessionData['status'] = 'ended';
+            $sessionData['ended_at'] = now()->toISOString();
+            $sessionData['end_reason'] = $reason;
+            $this->updateSessionData($sessionId, $sessionData);
+
+            // Close ElevenLabs WebSocket connection if active
+            if (isset($this->activeConnections[$sessionId])) {
+                $this->activeConnections[$sessionId]->close();
+                unset($this->activeConnections[$sessionId]);
+            }
+
+            // Broadcast call ended status
+            $event = new \App\Events\VoiceCallStatusUpdated(
+                $sessionData['channel_name'],
+                'ended',
+                "Call ended: {$reason}"
+            );
+            broadcast($event);
+
+            Log::info('Call ended successfully', [
+                'session_id' => $sessionId,
+                'reason' => $reason
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to end call', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage()
+            ]);
         }
     }
 }

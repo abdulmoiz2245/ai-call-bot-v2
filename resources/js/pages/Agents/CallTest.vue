@@ -257,7 +257,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onUnmounted } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Label } from '@/components/ui/label'
@@ -288,16 +288,19 @@ const callStatus = ref<'idle' | 'connecting' | 'connected' | 'ended'>('idle')
 const callDuration = ref(0)
 const connectionInfo = ref<any>(null)
 const callInterval = ref<number | null>(null)
-const socket = ref<WebSocket | null>(null)
 const mediaRecorder = ref<MediaRecorder | null>(null)
 const audioStream = ref<MediaStream | null>(null)
 const sessionId = ref<string | null>(null)
+const channelName = ref<string | null>(null)
+
+// WebSocket channels
+let regularChannel: any = null
+let privateAudioChannel: any = null
 
 // Computed
 const hasVariables = computed(() => Object.keys(props.variables).length > 0)
 
 const canStartCall = computed(() => {
-  // Allow call start when idle
   return callStatus.value === 'idle'
 })
 
@@ -313,10 +316,10 @@ const statusTitle = computed(() => {
 
 const statusDescription = computed(() => {
   switch (callStatus.value) {
-    case 'idle': return 'Click Start Call to begin testing via Laravel Reverb proxy'
-    case 'connecting': return 'Establishing Laravel Reverb connection...'
-    case 'connected': return 'Connected via Laravel Reverb - Speak to test your agent'
-    case 'ended': return 'Laravel Reverb connection closed'
+    case 'idle': return 'Click Start Call to begin testing via WebSocket audio streaming'
+    case 'connecting': return 'Establishing WebSocket connection...'
+    case 'connected': return 'Connected via WebSocket - Speak to test your agent'
+    case 'ended': return 'WebSocket connection closed'
     default: return ''
   }
 })
@@ -331,7 +334,7 @@ function startCall() {
   
   // Request microphone access first
   initializeAudio().then(() => {
-    startReverbCall()
+    startWebSocketCall()
   }).catch((error) => {
     console.error('Failed to initialize audio:', error)
     callStatus.value = 'idle'
@@ -363,8 +366,10 @@ async function initializeAudio() {
   }
 }
 
-async function startReverbCall() {
+async function startWebSocketCall() {
   try {
+    console.log('Starting WebSocket call initialization...')
+    
     // Initialize voice call session via Laravel API
     const response = await fetch(`/agents/${props.agent.id}/voice-call/initialize`, {
       method: 'POST',
@@ -379,123 +384,76 @@ async function startReverbCall() {
     })
     
     const data = await response.json()
+    console.log('Initialize response:', data)
     
     if (!data.success) {
       throw new Error(data.message || 'Failed to initialize voice call session')
     }
     
     sessionId.value = data.session_id
+    channelName.value = data.channel_name
     
-    // Use the global Echo instance for real-time communication
-    const channel = echo.channel(`voice-call.${sessionId.value}`)
-    
-    // Listen for server events
-    channel.listen('VoiceCallStatusUpdated', (event: any) => {
-      console.log('Call status updated:', event)
-      if (event.status === 'connected') {
-        callStatus.value = 'connected'
-        startCallTimer()
-        connectionInfo.value = {
-          platform: 'Laravel Reverb',
-          latency: Math.floor(Math.random() * 50) + 20,
-          quality: 'HD',
-          session_id: sessionId.value
-        }
-        
-        // Start streaming audio to Laravel backend
-        startAudioStreaming()
-      } else if (event.status === 'ended') {
-        callStatus.value = 'ended'
-        stopCallTimer()
-        stopAudioStreaming()
-      }
+    console.log('Session initialized:', {
+      session_id: sessionId.value,
+      channel_name: channelName.value
     })
     
-    channel.listen('VoiceCallMessage', (event: any) => {
-      console.log('Voice call message:', event)
-      
-      // Handle different message types from ElevenLabs via Laravel
-      switch (event.type) {
-        case 'audio':
-          // Handle audio chunk
-          if (event.audio_base64) {
-            playAudioFromBase64(event.audio_base64)
+    // Subscribe to regular channel for status updates
+    if (channelName.value) {
+      regularChannel = echo.channel(channelName.value)
+      console.log('Subscribed to regular channel:', channelName.value)
+    }
+    
+    // Subscribe to private audio channel for audio streaming
+    if (sessionId.value) {
+      const audioChannelName = `voice-call-audio.${sessionId.value}`
+      privateAudioChannel = echo.private(audioChannelName)
+      console.log('Subscribed to private audio channel:', audioChannelName)
+    }
+    
+    // Listen for status updates on regular channel
+    if (regularChannel) {
+      regularChannel.listen('.voice.call.status', (event: any) => {
+        console.log('Call status updated:', event)
+        if (event.status === 'connected') {
+          callStatus.value = 'connected'
+          startCallTimer()
+          connectionInfo.value = {
+            platform: 'WebSocket Audio',
+            latency: Math.floor(Math.random() * 30) + 10,
+            quality: 'HD',
+            session_id: sessionId.value
           }
-          break
-        case 'user_transcript':
-          console.log('User said:', event.user_transcript)
-          break
-        case 'agent_response':
-          console.log('Agent response:', event.agent_response)
-          break
-        case 'interruption':
-          console.log('User interrupted agent')
-          break
-        case 'error':
-          console.error('Voice AI error:', event.message)
+          
+          // Start streaming audio via WebSocket
+          startWebSocketAudioStreaming()
+        } else if (event.status === 'ended') {
           callStatus.value = 'ended'
-          break
-        default:
-          console.log('Unknown message type:', event.type)
-      }
-    })
-    
-    // Listen for client events (whisper events from other clients)
-    channel.listenForWhisper('end-call', (event: any) => {
-      console.log('Call ended by another client:', event)
-      callStatus.value = 'ended'
-      stopCallTimer()
-      stopAudioStreaming()
-    })
-    
-    channel.listenForWhisper('audio-data', (event: any) => {
-      // This could be used for monitoring or debugging audio flow
-      console.log('Audio data sent:', event.timestamp)
-    })
-    
-    console.log('Laravel Reverb connection established')
-    
-  } catch (error) {
-    console.error('Failed to start Reverb call:', error)
-    callStatus.value = 'idle'
-    connectionInfo.value = null
-  }
-}
-
-function startWebSocketCall() {
-  // Use Laravel Reverb implementation instead
-  startReverbCall()
-}
-
-function cancelCall() {
-  callStatus.value = 'idle'
-  stopCallTimer()
-  stopAudioStreaming()
-  connectionInfo.value = null
-  
-  if (socket.value) {
-    socket.value.close()
-    socket.value = null
-  }
-}
-
-function endCall() {
-  callStatus.value = 'ended'
-  stopCallTimer()
-  stopAudioStreaming()
-  
-  // Send end call event via WebSocket for real-time feedback
-  if (sessionId.value && echo) {
-    echo.channel(`voice-call.${sessionId.value}`)
-      .whisper('end-call', {
-        session_id: sessionId.value,
-        reason: 'user_ended'
+          stopCallTimer()
+          stopWebSocketAudioStreaming()
+        }
       })
-  }
-  
-  // Also send via API for server processing
-  if (sessionId.value) {
-    fetch('/voice-call/websocket/end', {
+    }
+    
+    // Listen for audio responses on private audio channel
+    if (privateAudioChannel) {
+      privateAudioChannel.listen('.voice.call.audio', (event: any) => {
+        console.log('Audio event received:', event.direction, event.timestamp)
+        
+        if (event.direction === 'outgoing' && event.audio_data) {
+          // Play AI response audio
+          playAudioFromBase64(event.audio_data)
+          
+          if (event.metadata?.transcript) {
+            console.log('AI response:', event.metadata.transcript)
+          }
+        }
+      })
+    }
+    
+    // Trigger connected status
+    console.log('Triggering connected status...')
+    const triggerResponse = await fetch('/voice-call/trigger-connected', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -503,22 +461,129 @@ function endCall() {
         'X-Requested-With': 'XMLHttpRequest'
       },
       body: JSON.stringify({
-        session_id: sessionId.value,
-        reason: 'user_ended'
+        session_id: sessionId.value
       })
-    }).catch(error => {
-      console.error('Failed to end call via API:', error)
     })
+    
+    const triggerData = await triggerResponse.json()
+    console.log('Trigger response:', triggerData)
+    
+  } catch (error) {
+    console.error('Failed to start WebSocket call:', error)
+    callStatus.value = 'idle'
+    connectionInfo.value = null
+  }
+}
+
+function startWebSocketAudioStreaming() {
+  if (!mediaRecorder.value || !sessionId.value) {
+    console.error('MediaRecorder or session not initialized')
+    return
+  }
+
+  // Set up data available handler for WebSocket audio transmission
+  mediaRecorder.value.ondataavailable = async (event) => {
+    if (event.data.size > 0) {
+      try {
+        // Convert audio blob to base64
+        const reader = new FileReader()
+        reader.onload = async () => {
+          const base64Audio = (reader.result as string).split(',')[1] // Remove data:audio/webm;base64, prefix
+          
+          // Send audio data directly to backend (more efficient than whisper roundtrip)
+          await fetch('/voice-call/audio-chunk', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+              'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+              session_id: sessionId.value,
+              audio_data: base64Audio,
+              user_id: props.agent.id,
+              timestamp: Date.now()
+            })
+          }).catch(error => {
+            console.error('Failed to send audio to backend:', error)
+          })
+        }
+        reader.readAsDataURL(event.data)
+      } catch (error) {
+        console.error('Failed to process audio data:', error)
+      }
+    }
+  }
+
+  // Start recording with shorter intervals for better real-time experience
+  mediaRecorder.value.start(500) // Send audio chunks every 500ms
+  console.log('WebSocket audio streaming started')
+}
+
+function stopWebSocketAudioStreaming() {
+  if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
+    mediaRecorder.value.stop()
   }
   
-  if (socket.value) {
-    socket.value.close()
-    socket.value = null
+  if (audioStream.value) {
+    audioStream.value.getTracks().forEach(track => track.stop())
+    audioStream.value = null
   }
   
-  // Disconnect from Echo channel
-  if (echo && sessionId.value) {
-    echo.leave(`voice-call.${sessionId.value}`)
+  console.log('WebSocket audio streaming stopped')
+}
+
+function cancelCall() {
+  callStatus.value = 'idle'
+  stopCallTimer()
+  stopWebSocketAudioStreaming()
+  connectionInfo.value = null
+  
+  // Disconnect from channels
+  if (regularChannel && channelName.value) {
+    echo.leave(channelName.value)
+    regularChannel = null
+  }
+  if (privateAudioChannel && sessionId.value) {
+    echo.leave(`voice-call-audio.${sessionId.value}`)
+    privateAudioChannel = null
+  }
+}
+
+async function endCall() {
+  callStatus.value = 'ended'
+  stopCallTimer()
+  stopWebSocketAudioStreaming()
+  
+  // Send end call signal to backend
+  if (sessionId.value) {
+    try {
+      await fetch('/voice-call/end-session', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+          'X-Requested-With': 'XMLHttpRequest'
+        },
+        body: JSON.stringify({
+          session_id: sessionId.value,
+          reason: 'user_ended',
+          save_audio: true // Enable audio saving for multi-user access
+        })
+      })
+    } catch (error) {
+      console.error('Failed to end call properly:', error)
+    }
+  }
+  
+  // Disconnect from channels
+  if (regularChannel && channelName.value) {
+    echo.leave(channelName.value)
+    regularChannel = null
+  }
+  if (privateAudioChannel && sessionId.value) {
+    echo.leave(`voice-call-audio.${sessionId.value}`)
+    privateAudioChannel = null
   }
   
   // Reset after 3 seconds
@@ -527,6 +592,7 @@ function endCall() {
     callDuration.value = 0
     connectionInfo.value = null
     sessionId.value = null
+    channelName.value = null
   }, 3000)
 }
 
@@ -552,107 +618,34 @@ function formatDuration(seconds: number): string {
 function playAudioFromBase64(base64Audio: string) {
   try {
     // Create audio element and play base64 audio
-    const audio = new Audio(`data:audio/mpeg;base64,${base64Audio}`)
-    audio.play().catch(error => {
-      console.error('Failed to play audio:', error)
+    const audioBlob = new Blob([Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0))], {
+      type: 'audio/mpeg'
     })
-  } catch (error) {
-    console.error('Failed to create audio from base64:', error)
-  }
-}
-
-function playAudioBlob(audioBlob: Blob) {
-  try {
-    // Create audio element from blob and play
     const audioUrl = URL.createObjectURL(audioBlob)
     const audio = new Audio(audioUrl)
-    audio.addEventListener('ended', () => {
-      // Clean up the blob URL after playback
-      URL.revokeObjectURL(audioUrl)
-    })
-    audio.play().catch(error => {
-      console.error('Failed to play audio blob:', error)
-      URL.revokeObjectURL(audioUrl)
-    })
+    audio.play()
+      .then(() => {
+        console.log('AI response audio played successfully')
+      })
+      .catch((error) => {
+        console.error('Failed to play AI response audio:', error)
+      })
   } catch (error) {
-    console.error('Failed to create audio from blob:', error)
-  }
-}
-
-function startAudioStreaming() {
-  if (!mediaRecorder.value || !audioStream.value || !sessionId.value) {
-    console.error('MediaRecorder, audio stream, or session ID not available')
-    return
-  }
-
-  // Set up data available handler for WebSocket + API
-  mediaRecorder.value.ondataavailable = async (event) => {
-    if (event.data.size > 0) {
-      try {
-        // Convert audio blob to base64
-        const reader = new FileReader()
-        reader.onload = async () => {
-          const base64Audio = (reader.result as string).split(',')[1] // Remove data:audio/webm;base64, prefix
-          
-          // Send via WebSocket for real-time feedback
-          if (echo && sessionId.value) {
-            echo.channel(`voice-call.${sessionId.value}`)
-              .whisper('audio-data', {
-                session_id: sessionId.value,
-                audio_data: base64Audio,
-                timestamp: Date.now()
-              })
-          }
-          
-          // Also send via API for server processing
-          try {
-            await fetch('/voice-call/websocket/audio', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-                'X-Requested-With': 'XMLHttpRequest'
-              },
-              body: JSON.stringify({
-                session_id: sessionId.value,
-                audio_data: base64Audio
-              })
-            })
-          } catch (apiError) {
-            console.error('Failed to send audio via API:', apiError)
-          }
-        }
-        reader.readAsDataURL(event.data)
-      } catch (error) {
-        console.error('Failed to process audio data:', error)
-      }
-    }
-  }
-
-  // Start recording with shorter intervals for better real-time experience
-  mediaRecorder.value.start(250) // Send audio chunks every 250ms
-}
-
-function stopAudioStreaming() {
-  if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
-    mediaRecorder.value.stop()
-  }
-  
-  if (audioStream.value) {
-    audioStream.value.getTracks().forEach(track => track.stop())
-    audioStream.value = null
+    console.error('Failed to create audio from base64:', error)
   }
 }
 
 // Cleanup
 onUnmounted(() => {
   stopCallTimer()
-  stopAudioStreaming()
-  if (socket.value) {
-    socket.value.close()
+  stopWebSocketAudioStreaming()
+  
+  if (regularChannel && channelName.value) {
+    echo.leave(channelName.value)
   }
-  if (echo) {
-    echo.disconnect()
+  if (privateAudioChannel && sessionId.value) {
+    echo.leave(`voice-call-audio.${sessionId.value}`)
   }
 })
 </script>
+

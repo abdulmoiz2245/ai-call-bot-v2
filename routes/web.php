@@ -60,13 +60,9 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     
     // Voice Calls (Laravel Reverb WebSocket)
     Route::post('agents/{agent}/voice-call/initialize', [VoiceCallController::class, 'initialize'])->name('voice-call.initialize');
-    Route::post('voice-call/send-audio', [VoiceCallController::class, 'sendAudio'])->name('voice-call.send-audio');
-    Route::post('voice-call/end', [VoiceCallController::class, 'endCall'])->name('voice-call.end');
+    Route::post('voice-call/trigger-connected', [VoiceCallController::class, 'triggerConnectedStatus'])->name('voice-call.trigger-connected');
+    Route::post('voice-call/audio-chunk', [VoiceCallController::class, 'handleAudioChunk'])->name('voice-call.audio-chunk');
     Route::get('voice-call/{sessionId}/status', [VoiceCallController::class, 'getSessionStatus'])->name('voice-call.status');
-    
-    // WebSocket Event Handlers (for client events)
-    Route::post('voice-call/websocket/audio', [VoiceCallController::class, 'handleWebSocketAudio'])->name('voice-call.websocket.audio');
-    Route::post('voice-call/websocket/end', [VoiceCallController::class, 'handleWebSocketEnd'])->name('voice-call.websocket.end');
     
     // Calls
     Route::resource('calls', CallController::class)->only(['index', 'show']);
@@ -84,6 +80,9 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
 // Webhook routes (no auth required)
 Route::post('webhooks/calls', [CallController::class, 'webhook'])->name('webhooks.calls');
 Route::post('webhooks/voice-call/metadata', [VoiceCallController::class, 'handleConversationMetadata'])->name('webhooks.voice-call.metadata');
+
+// Test routes
+require __DIR__.'/test.php';
 
 // TwiML routes (no auth required - for Twilio callbacks)
 Route::prefix('api/twiml')->name('twiml.')->group(function () {
