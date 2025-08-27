@@ -264,6 +264,8 @@ import { Label } from '@/components/ui/label'
 import { ArrowLeft } from 'lucide-vue-next'
 import { router } from '@inertiajs/vue3'
 import echo from '@/echo'
+import { MicVAD } from "@ricky0123/vad-web"
+
 
 interface Props {
   agent: {
@@ -296,6 +298,7 @@ const channelName = ref<string | null>(null)
 // WebSocket channels
 let regularChannel: any = null
 let privateAudioChannel: any = null
+let vadInstance: any = null
 
 // Computed
 const hasVariables = computed(() => Object.keys(props.variables).length > 0)
@@ -400,7 +403,7 @@ async function startWebSocketCall() {
     
     // Subscribe to regular channel for status updates
     if (channelName.value) {
-      regularChannel = echo.channel(channelName.value)
+      regularChannel = echo.private(channelName.value)
       console.log('Subscribed to regular channel:', channelName.value)
     }
     
@@ -475,38 +478,98 @@ async function startWebSocketCall() {
   }
 }
 
-function startWebSocketAudioStreaming() {
+async function startWebSocketAudioStreaming() {
   if (!mediaRecorder.value || !sessionId.value) {
     console.error('MediaRecorder or session not initialized')
     return
   }
 
-  // Set up data available handler for WebSocket audio transmission
+  try {
+    // Initialize VAD with proper configuration
+    const myvad = await MicVAD.new({
+      positiveSpeechThreshold: 0.65,
+      negativeSpeechThreshold: 0.45,
+      preSpeechPadFrames: 3,
+      redemptionFrames: 35,
+      frameSamples: 512,
+      minSpeechFrames: 12,
+      submitUserSpeechOnPause: false,
+      baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.20/dist/",
+      onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/",
+      model: "v5",
+      onSpeechStart: () => {
+        console.log('Speech started')
+      },
+      onSpeechEnd: (audio) => {
+        console.log('Speech ended, processing audio chunk...', audio.length)
+        
+        // Convert Float32Array to base64 audio data
+        const audioBuffer = new ArrayBuffer(audio.length * 4)
+        const view = new Float32Array(audioBuffer)
+        view.set(audio)
+        
+        // Convert to wav format (simplified)
+        const reader = new FileReader()
+        const blob = new Blob([audioBuffer], { type: 'audio/wav' })
+        
+        reader.onload = () => {
+          const base64Audio = (reader.result as string).split(',')[1]
+          
+          // Send audio data via whisper event on regular channel
+          if (regularChannel) {
+            regularChannel.whisper('client-audio-data', {
+              session_id: sessionId.value,
+              audio_data: base64Audio,
+              user_id: props.agent.id,
+              timestamp: Date.now(),
+              audio_format: 'wav',
+              sample_rate: 16000
+            })
+            console.log('Audio chunk sent via whisper event')
+          } else {
+            console.warn('Regular channel not available')
+          }
+        }
+        
+        reader.readAsDataURL(blob)
+      },
+      onVADMisfire: () => {
+        console.log('VAD misfire detected')
+      }
+    })
+    
+    await myvad.start()
+    vadInstance = myvad
+    console.log('VAD started successfully')
+  } catch (error) {
+    console.error('Failed to initialize VAD:', error)
+    console.log('Falling back to continuous recording...')
+    
+    // Fallback to the commented MediaRecorder approach
+    startFallbackRecording()
+  }
+
+  console.log('WebSocket audio streaming started')
+}
+
+function startFallbackRecording() {
+  if (!mediaRecorder.value) return
+  
   mediaRecorder.value.ondataavailable = async (event) => {
     if (event.data.size > 0) {
       try {
-        // Convert audio blob to base64
         const reader = new FileReader()
         reader.onload = async () => {
-          const base64Audio = (reader.result as string).split(',')[1] // Remove data:audio/webm;base64, prefix
+          const base64Audio = (reader.result as string).split(',')[1]
           
-          // Send audio data directly to backend (more efficient than whisper roundtrip)
-          await fetch('/voice-call/audio-chunk', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-              'X-Requested-With': 'XMLHttpRequest'
-            },
-            body: JSON.stringify({
+          if (regularChannel) {
+            regularChannel.whisper('client-audio-data', {
               session_id: sessionId.value,
               audio_data: base64Audio,
               user_id: props.agent.id,
               timestamp: Date.now()
             })
-          }).catch(error => {
-            console.error('Failed to send audio to backend:', error)
-          })
+          }
         }
         reader.readAsDataURL(event.data)
       } catch (error) {
@@ -515,12 +578,21 @@ function startWebSocketAudioStreaming() {
     }
   }
 
-  // Start recording with shorter intervals for better real-time experience
-  mediaRecorder.value.start(500) // Send audio chunks every 500ms
-  console.log('WebSocket audio streaming started')
+  mediaRecorder.value.start(1000) // Send audio chunks every 1 second
 }
 
 function stopWebSocketAudioStreaming() {
+  // Stop VAD if it's running
+  if (vadInstance) {
+    try {
+      vadInstance.pause()
+      vadInstance = null
+      console.log('VAD stopped')
+    } catch (error) {
+      console.error('Error stopping VAD:', error)
+    }
+  }
+  
   if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
     mediaRecorder.value.stop()
   }

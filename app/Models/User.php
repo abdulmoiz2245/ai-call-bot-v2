@@ -90,4 +90,22 @@ class User extends Authenticatable
     {
         return $this->role === 'VIEWER';
     }
+
+    // Permission helpers
+    public function hasAccessToAgent($agentId): bool
+    {
+        // Super admins have access to all agents
+        if ($this->isSuperAdmin()) {
+            return true;
+        }
+
+        // Find the agent
+        $agent = Agent::find($agentId);
+        if (!$agent) {
+            return false;
+        }
+
+        // Users can only access agents from their own company
+        return $this->company_id === $agent->company_id;
+    }
 }
