@@ -91,7 +91,8 @@ class Agent extends Model
             $variables = array_merge($variables, $this->extractVariables($this->greeting_message));
         }
         
-        return array_unique($variables);
+        // Use array_values to ensure sequential keys for proper JSON array serialization
+        return array_values(array_unique($variables));
     }
 
     /**

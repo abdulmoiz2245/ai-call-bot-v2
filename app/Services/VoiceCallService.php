@@ -3,6 +3,8 @@
 namespace App\Services;
 
 use App\Models\Agent;
+use App\Services\OpenAIService;
+use App\Services\ElevenLabsService;
 use Illuminate\Support\Facades\Redis;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Http;
@@ -33,6 +35,10 @@ class VoiceCallService
     {
         $sessionId = uniqid('voice_call_');
         
+        // Generate processed prompts with variables
+        $processedSystemPrompt = $agent->getProcessedSystemPrompt($variables);
+        $processedGreetingMessage = $agent->getProcessedGreetingMessage($variables);
+        
         // Store session data in Redis
         $sessionData = [
             'session_id' => $sessionId,
@@ -40,6 +46,8 @@ class VoiceCallService
             'elevenlabs_agent_id' => $agent->elevenlabs_agent_id,
             'channel_name' => $channelName,
             'variables' => $variables,
+            'processed_system_prompt' => $processedSystemPrompt,
+            'processed_greeting_message' => $processedGreetingMessage,
             'status' => 'initializing',
             'created_at' => now()->toISOString(),
             'elevenlabs_websocket_url' => null,
@@ -48,10 +56,13 @@ class VoiceCallService
 
         Redis::setex("voice_call:{$sessionId}", 3600, json_encode($sessionData));
 
-        Log::info('Voice call session created', [
+        Log::info('Voice call session created with processed prompts', [
             'session_id' => $sessionId,
             'agent_id' => $agent->id,
-            'channel_name' => $channelName
+            'channel_name' => $channelName,
+            'variables' => $variables,
+            'processed_system_prompt' => $processedSystemPrompt,
+            'processed_greeting_message' => $processedGreetingMessage
         ]);
 
         return $sessionData;
@@ -103,34 +114,42 @@ class VoiceCallService
      */
     private function createElevenLabsWebSocketConnection(string $sessionId, string $websocketUrl): void
     {
-        // For now, we'll simulate the connection since React/Ratchet WebSocket client
-        // requires more complex setup. In production, you'd use ReactPHP or similar.
-        
-        Log::info('Creating ElevenLabs WebSocket connection', [
-            'session_id' => $sessionId,
-            'websocket_url' => $websocketUrl
-        ]);
+        try {
+            $sessionData = $this->getSessionData($sessionId);
+            if (!$sessionData) {
+                throw new \Exception('Session data not found');
+            }
 
-        // Store the connection reference
-        $this->activeConnections[$sessionId] = [
-            'websocket_url' => $websocketUrl,
-            'status' => 'connected',
-            'created_at' => now()
-        ];
+            $agent = Agent::find($sessionData['agent_id']);
+            if (!$agent || !$agent->elevenlabs_agent_id) {
+                throw new \Exception('Agent not found or not connected to ElevenLabs');
+            }
 
-        // Update session status
-        $this->updateSessionStatus($sessionId, 'connected');
+            // Use ElevenLabsService to create connection
+            $elevenLabsService = app(ElevenLabsService::class);
+            $connectionData = $elevenLabsService->createWebSocketConnection($sessionId, $agent->elevenlabs_agent_id);
 
-        // Connected status will be triggered manually after frontend subscribes
-        $sessionData = $this->getSessionData($sessionId);
-        if ($sessionData) {
-            Log::info('WebSocket connection established, ready for manual connected status trigger', [
+            // Store the connection reference
+            $this->activeConnections[$sessionId] = $connectionData;
+
+            // Update session status
+            $this->updateSessionStatus($sessionId, 'connected');
+
+            Log::info('ElevenLabs WebSocket connection established', [
                 'session_id' => $sessionId,
-                'channel_name' => $sessionData['channel_name'],
-                'status' => 'ready'
+                'agent_id' => $agent->elevenlabs_agent_id,
+                'websocket_url' => $connectionData['websocket_url']
             ]);
-        } else {
-            Log::error('No session data found for connection', ['session_id' => $sessionId]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to create ElevenLabs WebSocket connection', [
+                'session_id' => $sessionId,
+                'websocket_url' => $websocketUrl,
+                'error' => $e->getMessage()
+            ]);
+            
+            $this->updateSessionStatus($sessionId, 'error', $e->getMessage());
+            throw $e;
         }
     }
 
@@ -150,15 +169,20 @@ class VoiceCallService
         }
 
         try {
-            // In a real implementation, you would send the binary audio data
-            // directly to the ElevenLabs WebSocket connection
-            Log::info('Sending audio to ElevenLabs', [
+            // Use ElevenLabsService to send audio
+            $elevenLabsService = app(ElevenLabsService::class);
+            $result = $elevenLabsService->sendAudioToWebSocket($sessionId, $audioData);
+
+            Log::info('Audio sent to ElevenLabs', [
                 'session_id' => $sessionId,
-                'audio_size' => is_string($audioData) ? strlen($audioData) : 'binary'
+                'audio_size' => is_string($audioData) ? strlen($audioData) : 'binary',
+                'has_response' => !empty($result)
             ]);
 
-            // Simulate processing and response from ElevenLabs
-            $this->simulateElevenLabsResponse($sessionId);
+            // If we get a response, handle it
+            if ($result) {
+                $this->handleElevenLabsResponse($sessionId, $result);
+            }
 
             return true;
 
@@ -172,40 +196,14 @@ class VoiceCallService
     }
 
     /**
-     * Simulate ElevenLabs response (for development)
-     * In production, this would be replaced with actual WebSocket message handling
+     * Handle response from ElevenLabs
      */
-    private function simulateElevenLabsResponse(string $sessionId): void
+    private function handleElevenLabsResponse(string $sessionId, array $response): void
     {
         $sessionData = $this->getSessionData($sessionId);
         if (!$sessionData) {
             return;
         }
-
-        // Simulate different types of responses from ElevenLabs
-        $responses = [
-            [
-                'type' => 'conversation_initiation_metadata',
-                'conversation_initiation_metadata_event' => [
-                    'conversation_id' => uniqid('conv_'),
-                    'agent_output_audio_format' => 'pcm_16000'
-                ]
-            ],
-            [
-                'type' => 'user_transcript',
-                'user_transcript' => 'Hello, this is a test message'
-            ],
-            [
-                'type' => 'agent_response',
-                'agent_response' => 'Hello! How can I help you today?'
-            ],
-            [
-                'type' => 'audio',
-                'audio_base64' => base64_encode('simulated_audio_data_' . time())
-            ]
-        ];
-
-        $response = $responses[array_rand($responses)];
 
         // Broadcast the response to the browser
         broadcast(new \App\Events\VoiceCallMessage(
@@ -290,6 +288,213 @@ class VoiceCallService
     }
 
     /**
+     * Process audio file directly through AI pipeline
+     */
+    public function processAudioFile(string $sessionId, string $filePath, array $metadata = []): ?array
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        // dd($sessionId);
+
+        // if (!$sessionData) {
+        //     Log::error('Session not found for audio file processing', ['session_id' => $sessionId]);
+        //     return null;
+        // }
+
+        // try {
+            Log::info('Processing audio file', [
+                'session_id' => $sessionId,
+                'file_path' => $filePath,
+                'file_exists' => file_exists($filePath),
+                'file_size' => file_exists($filePath) ? filesize($filePath) : 0
+            ]);
+
+            // Check if file exists before processing
+            if (!file_exists($filePath)) {
+                throw new \Exception("Audio file not found at path: {$filePath}");
+            }
+
+            $fileSize = filesize($filePath);
+            if ($fileSize === 0) {
+                throw new \Exception("Audio file is empty: {$filePath}");
+            }
+
+            // Read the file and convert to base64 for now 
+            // (we'll use direct file processing with ElevenLabs later)
+            $audioContent = file_get_contents($filePath);
+            if ($audioContent === false) {
+                throw new \Exception("Failed to read audio file: {$filePath}");
+            }
+            
+            $audioData = base64_encode($audioContent);
+
+            
+            try {
+                // Step 1: Transcribe audio using ElevenLabs Speech-to-Text
+                $elevenLabsService = app(ElevenLabsService::class);
+                $transcript = $elevenLabsService->transcribeAudio($audioData);
+                
+                if (!$transcript) {
+                    Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
+                    return null;
+                }
+
+                Log::info('Audio transcribed successfully with ElevenLabs', [
+                    'session_id' => $sessionId,
+                    'transcript' => $transcript
+                ]);
+
+                // Step 2: Get AI response using OpenAI ChatGPT
+                $sessionData = $this->getSessionData($sessionId);
+
+                if (!$sessionData) {
+                    Log::error('Session data not found', ['session_id' => $sessionId]);
+                    return null;
+                }
+
+                $agent = Agent::find($sessionData['agent_id']);
+                if (!$agent) {
+                    Log::error('Agent not found', ['session_id' => $sessionId, 'agent_id' => $sessionData['agent_id']]);
+                    return null;
+                }
+
+                // Get processed prompts with variables from session
+                $variables = $sessionData['variables'] ?? [];
+                $processedSystemPrompt = $agent->getProcessedSystemPrompt($variables);
+                $processedGreetingMessage = $agent->getProcessedGreetingMessage($variables);
+
+                // Get conversation history from session or cache
+                $conversationHistory = $this->getConversationHistory($sessionId);
+                
+                // Log the processed prompts being sent to OpenAI
+                Log::info('Sending processed prompts to OpenAI', [
+                    'session_id' => $sessionId,
+                    'agent_id' => $agent->id,
+                    'processed_system_prompt' => $processedSystemPrompt,
+                    'processed_greeting_message' => $processedGreetingMessage,
+                    'conversation_history_count' => count($conversationHistory),
+                    'user_transcript' => $transcript
+                ]);
+                
+                $openaiService = app(OpenAIService::class);
+                $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory, $processedSystemPrompt);
+                
+                if (!$aiResponse) {
+                    Log::warning('Failed to generate AI response', ['session_id' => $sessionId]);
+                    return null;
+                }
+
+                Log::info('AI response generated successfully', [
+                    'session_id' => $sessionId,
+                    'response' => $aiResponse['text']
+                ]);
+
+                // Step 3: Convert AI response to speech using ElevenLabs TTS with caching
+                $voiceId = $agent->voice_id ?: 'default';
+                
+                // Check if audio already exists in cache
+                $audioBase64 = $this->getCachedAudio($voiceId, $aiResponse['text']);
+                
+                if ($audioBase64) {
+                    Log::info('Using cached audio for TTS', [
+                        'session_id' => $sessionId,
+                        'voice_id' => $voiceId,
+                        'text_preview' => substr($aiResponse['text'], 0, 100) . '...',
+                        'cache_hit' => true
+                    ]);
+                } else {
+                    // Generate new audio using ElevenLabs TTS
+                    $elevenLabsService = app(ElevenLabsService::class);
+                    $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $voiceId);
+                    
+                    if (!$audioBase64) {
+                        Log::warning('Failed to convert text to speech with ElevenLabs', ['session_id' => $sessionId]);
+                        return null;
+                    }
+                    
+                    // Cache the newly generated audio
+                    $this->cacheAudio($voiceId, $aiResponse['text'], $audioBase64);
+                    
+                    Log::info('Generated and cached new TTS audio', [
+                        'session_id' => $sessionId,
+                        'voice_id' => $voiceId,
+                        'audio_length' => strlen($audioBase64),
+                        'cache_hit' => false
+                    ]);
+                }
+
+                Log::info('Text-to-speech processing completed', [
+                    'session_id' => $sessionId,
+                    'voice_id' => $voiceId,
+                    'audio_length' => strlen($audioBase64),
+                    'was_cached' => $this->getCachedAudio($voiceId, $aiResponse['text']) !== null
+                ]);
+
+                // Step 4: Update conversation history with full context
+                $conversationUpdate = [
+                    ['role' => 'user', 'content' => $transcript],
+                    ['role' => 'assistant', 'content' => $aiResponse['text']]
+                ];
+                
+                $this->updateConversationHistory($sessionId, $conversationUpdate);
+                
+                // Log conversation history update
+                Log::info('Updated conversation history', [
+                    'session_id' => $sessionId,
+                    'new_messages_added' => count($conversationUpdate),
+                    'total_history_messages' => count($this->getConversationHistory($sessionId)),
+                    'user_message' => $transcript,
+                    'ai_response' => $aiResponse['text']
+                ]);
+
+                return [
+                    'type' => 'audio',
+                    'audio_base64' => $audioBase64,
+                    'transcript' => $aiResponse['text'],
+                    'user_transcript' => $transcript,
+                    'ai_model' => $aiResponse['model'] ?? 'gpt-4o-mini',
+                    'transcription_service' => 'elevenlabs',
+                    'tts_service' => 'elevenlabs',
+                    'timestamp' => time()
+                ];
+
+            } catch (\Exception $e) {
+                Log::error('Failed to process audio through ElevenLabs + OpenAI pipeline', [
+                    'session_id' => $sessionId,
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                return null;
+            }
+            // If we get an AI response, store it too
+            if ($aiResponse && isset($aiResponse['audio_base64'])) {
+                $this->storeAudioChunk($sessionId, $aiResponse['audio_base64'], 'outgoing', [
+                    'type' => $aiResponse['type'] ?? 'ai_response',
+                    'transcript' => $aiResponse['transcript'] ?? null,
+                    'timestamp' => time()
+                ]);
+            }
+
+            Log::info('Audio file processed', [
+                'session_id' => $sessionId,
+                'input_file_size' => strlen($audioContent),
+                'has_ai_response' => !empty($aiResponse),
+                'user_id' => $metadata['user_id'] ?? null
+            ]);
+
+            return $aiResponse;
+
+        // } catch (\Exception $e) {
+        //     Log::error('Failed to process audio file', [
+        //         'session_id' => $sessionId,
+        //         'file_path' => $filePath,
+        //         'error' => $e->getMessage(),
+        //         'trace' => $e->getTraceAsString()
+        //     ]);
+        //     return null;
+        // }
+    }
+
+    /**
      * Store audio chunk for multi-user access
      */
     private function storeAudioChunk(string $sessionId, string $audioData, string $direction, array $metadata = []): void
@@ -349,23 +554,126 @@ class VoiceCallService
      */
     private function sendAudioToElevenLabsWebSocket(string $sessionId, string $audioData): ?array
     {
-        // For now, simulate AI response
-        // In production, this would send to the actual ElevenLabs WebSocket connection
-        $responses = [
-            [
-                'type' => 'audio',
-                'audio_base64' => base64_encode('simulated_ai_response_' . time()),
-                'transcript' => 'Thank you for your message. How can I assist you further?'
-            ],
-            [
-                'type' => 'audio',
-                'audio_base64' => base64_encode('simulated_ai_response_' . time()),
-                'transcript' => 'I understand. Let me help you with that.'
-            ]
-        ];
+        try {
+            // Step 1: Transcribe audio using ElevenLabs Speech-to-Text
+            $elevenLabsService = app(ElevenLabsService::class);
+            $transcript = $elevenLabsService->transcribeAudio($audioData);
+            
+            if (!$transcript) {
+                Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
+                return null;
+            }
 
-        // Randomly return a response or null (to simulate when AI doesn't respond)
-        return rand(0, 1) ? $responses[array_rand($responses)] : null;
+            Log::info('Audio transcribed successfully with ElevenLabs', [
+                'session_id' => $sessionId,
+                'transcript' => $transcript
+            ]);
+
+            // Step 2: Get AI response using OpenAI ChatGPT
+            $sessionData = $this->getSessionData($sessionId);
+            if (!$sessionData) {
+                Log::error('Session data not found', ['session_id' => $sessionId]);
+                return null;
+            }
+
+            $agent = Agent::find($sessionData['agent_id']);
+            if (!$agent) {
+                Log::error('Agent not found', ['session_id' => $sessionId, 'agent_id' => $sessionData['agent_id']]);
+                return null;
+            }
+
+            // Get conversation history from session or cache
+            $conversationHistory = $this->getConversationHistory($sessionId);
+            
+            $openaiService = app(OpenAIService::class);
+            $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory);
+            
+            if (!$aiResponse) {
+                Log::warning('Failed to generate AI response', ['session_id' => $sessionId]);
+                return null;
+            }
+
+            Log::info('AI response generated successfully', [
+                'session_id' => $sessionId,
+                'response' => $aiResponse['text']
+            ]);
+
+            // Step 3: Convert AI response to speech using ElevenLabs TTS
+            $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $agent->voice_id);
+            
+            if (!$audioBase64) {
+                Log::warning('Failed to convert text to speech with ElevenLabs', ['session_id' => $sessionId]);
+                return null;
+            }
+
+            Log::info('Text-to-speech conversion successful', [
+                'session_id' => $sessionId,
+                'audio_length' => strlen($audioBase64)
+            ]);
+
+            // Step 4: Update conversation history
+            $this->updateConversationHistory($sessionId, [
+                ['role' => 'user', 'content' => $transcript],
+                ['role' => 'assistant', 'content' => $aiResponse['text']]
+            ]);
+
+            return [
+                'type' => 'audio',
+                'audio_base64' => $audioBase64,
+                'transcript' => $aiResponse['text'],
+                'user_transcript' => $transcript,
+                'ai_model' => $aiResponse['model'] ?? 'gpt-4o-mini',
+                'transcription_service' => 'elevenlabs',
+                'tts_service' => 'elevenlabs',
+                'timestamp' => time()
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Failed to process audio through ElevenLabs + OpenAI pipeline', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Get conversation history for a session
+     */
+    private function getConversationHistory(string $sessionId): array
+    {
+        $historyKey = "conversation_history:{$sessionId}";
+        $history = Redis::get($historyKey);
+        return $history ? json_decode($history, true) : [];
+    }
+
+    /**
+     * Update conversation history for a session
+     */
+    private function updateConversationHistory(string $sessionId, array $newMessages): void
+    {
+        $historyKey = "conversation_history:{$sessionId}";
+        $existingHistory = $this->getConversationHistory($sessionId);
+        
+        // Add new messages to history
+        $updatedHistory = array_merge($existingHistory, $newMessages);
+        
+        // Keep only last 20 messages to avoid memory issues
+        if (count($updatedHistory) > 20) {
+            $updatedHistory = array_slice($updatedHistory, -20);
+        }
+        
+        Redis::setex($historyKey, 3600, json_encode($updatedHistory)); // 1 hour expiry
+    }
+
+    /**
+     * Clear conversation history for a session
+     */
+    private function clearConversationHistory(string $sessionId): void
+    {
+        $historyKey = "conversation_history:{$sessionId}";
+        Redis::del($historyKey);
     }
 
     /**
@@ -384,6 +692,9 @@ class VoiceCallService
                 // In production, properly close the WebSocket connection
                 unset($this->activeConnections[$sessionId]);
             }
+
+            // Clear conversation history
+            $this->clearConversationHistory($sessionId);
 
             // Update session status
             $this->updateSessionStatus($sessionId, 'ended');
@@ -649,5 +960,54 @@ class VoiceCallService
                 'error' => $e->getMessage()
             ]);
         }
+    }
+
+    /**
+     * Generate cache key for audio based on voice_id and text content
+     */
+    private function generateAudioCacheKey(string $voiceId, string $text): string
+    {
+        $textHash = md5(trim($text));
+        return "voice_{$voiceId}_audio_generated_{$textHash}";
+    }
+
+    /**
+     * Check if audio already exists in Redis cache
+     */
+    private function getCachedAudio(string $voiceId, string $text): ?string
+    {
+        $cacheKey = $this->generateAudioCacheKey($voiceId, $text);
+        $cachedAudio = Redis::get($cacheKey);
+        
+        if ($cachedAudio) {
+            Log::info('Found cached audio', [
+                'voice_id' => $voiceId,
+                'cache_key' => $cacheKey,
+                'text_preview' => substr($text, 0, 100) . '...',
+                'cached_audio_length' => strlen($cachedAudio)
+            ]);
+            return $cachedAudio;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Store audio in Redis cache with voice_id_audio_generated_key format
+     */
+    private function cacheAudio(string $voiceId, string $text, string $audioBase64): void
+    {
+        $cacheKey = $this->generateAudioCacheKey($voiceId, $text);
+        
+        // Store audio in Redis with 24 hour expiry
+        Redis::setex($cacheKey, 86400, $audioBase64);
+        
+        Log::info('Cached audio for future use', [
+            'voice_id' => $voiceId,
+            'cache_key' => $cacheKey,
+            'text_preview' => substr($text, 0, 100) . '...',
+            'audio_length' => strlen($audioBase64),
+            'expiry_hours' => 24
+        ]);
     }
 }

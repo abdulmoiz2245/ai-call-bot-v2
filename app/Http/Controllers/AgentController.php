@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Agent;
 use App\Services\ElevenLabsService;
+use App\Services\VoiceCallService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -12,7 +13,8 @@ use Inertia\Inertia;
 class AgentController extends Controller
 {
     public function __construct(
-        private ElevenLabsService $elevenLabsService
+        private ElevenLabsService $elevenLabsService,
+        private VoiceCallService $voiceCallService
     ) {}
 
     /**
@@ -481,16 +483,20 @@ class AgentController extends Controller
                     ]
                 ]);
             } else {
+                // Create session for custom WebSocket to store variables and processed prompts
+                $sessionData = $this->voiceCallService->createSession($agent, 'custom-websocket', $variables);
+                
                 // Return custom WebSocket configuration for non-connected agents
                 return response()->json([
                     'success' => true,
                     'websocket_url' => config('app.websocket_url', 'ws://localhost:8080') . '/call-test/' . $agent->id,
-                    'session_id' => uniqid('session_'),
+                    'session_id' => $sessionData['session_id'],
                     'agent_id' => $agent->id,
                     'connection_type' => 'custom',
+                    'variables' => $variables,
                     'processed_prompts' => [
-                        'system_prompt' => $agent->getProcessedSystemPrompt($variables),
-                        'greeting_message' => $agent->getProcessedGreetingMessage($variables),
+                        'system_prompt' => $sessionData['processed_system_prompt'],
+                        'greeting_message' => $sessionData['processed_greeting_message'],
                     ]
                 ]);
             }

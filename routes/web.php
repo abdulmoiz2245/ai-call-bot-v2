@@ -62,6 +62,7 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::post('agents/{agent}/voice-call/initialize', [VoiceCallController::class, 'initialize'])->name('voice-call.initialize');
     Route::post('voice-call/trigger-connected', [VoiceCallController::class, 'triggerConnectedStatus'])->name('voice-call.trigger-connected');
     Route::post('voice-call/audio-chunk', [VoiceCallController::class, 'handleAudioChunk'])->name('voice-call.audio-chunk');
+    Route::post('voice-call/audio-file', [VoiceCallController::class, 'handleAudioFile'])->name('voice-call.audio-file');
     Route::get('voice-call/{sessionId}/status', [VoiceCallController::class, 'getSessionStatus'])->name('voice-call.status');
     
     // Calls
@@ -76,6 +77,24 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::get('analytics', [AnalyticsController::class, 'index'])->name('analytics.index');
     Route::get('analytics/export', [AnalyticsController::class, 'export'])->name('analytics.export');
 });
+
+// Audio response file serving with proper headers (no auth required)
+Route::get('audio-response/{sessionId}/{filename}', function ($sessionId, $filename) {
+    $filePath = storage_path("app/public/audio_responses/{$sessionId}/{$filename}");
+    
+    if (!file_exists($filePath)) {
+        abort(404);
+    }
+    
+    return response()->file($filePath, [
+        'Content-Type' => 'audio/mpeg',
+        'Accept-Ranges' => 'bytes',
+        'Cache-Control' => 'public, max-age=3600',
+        'Access-Control-Allow-Origin' => '*',
+        'Access-Control-Allow-Methods' => 'GET',
+        'Access-Control-Allow-Headers' => 'Content-Type, Range'
+    ]);
+})->name('audio-response');
 
 // Webhook routes (no auth required)
 Route::post('webhooks/calls', [CallController::class, 'webhook'])->name('webhooks.calls');

@@ -60,9 +60,10 @@ class ElevenLabsService
                 'xi-api-key' => $this->apiKey,
                 'Content-Type' => 'application/json',
                 'Accept' => 'audio/mpeg',
-            ])->post("{$this->baseUrl}/text-to-speech/{$voiceId}", [
+                'x-region' => 'europe-west4'
+            ])->post("https://api-global-preview.elevenlabs.io/v1/text-to-speech/{$voiceId}", [
                 'text' => $text,
-                'model_id' => 'eleven_monolingual_v1',
+                'model_id' => 'eleven_flash_v2_5',
                 'voice_settings' => $settings,
             ]);
 
@@ -471,12 +472,30 @@ class ElevenLabsService
             // Generate a unique session ID for this conversation
             $sessionId = uniqid('conv_' . $agent->elevenlabs_agent_id . '_');
 
+            // Create session in VoiceCallService to store variables and processed prompts
+            $voiceCallService = app(VoiceCallService::class);
+            $sessionData = $voiceCallService->createSession($agent, 'elevenlabs-websocket', $variables);
+
+            Log::info('Created ElevenLabs WebSocket session with processed prompts', [
+                'session_id' => $sessionId,
+                'agent_id' => $agent->id,
+                'elevenlabs_agent_id' => $agent->elevenlabs_agent_id,
+                'variables' => $variables,
+                'processed_system_prompt' => $sessionData['processed_system_prompt'] ?? null,
+                'processed_greeting_message' => $sessionData['processed_greeting_message'] ?? null
+            ]);
+
             return [
                 'url' => $websocketUrl,
-                'session_id' => $sessionId,
+                'session_id' => $sessionData['session_id'], // Use the session ID from VoiceCallService
                 'agent_id' => $agent->elevenlabs_agent_id,
                 'api_key' => $this->apiKey, // Will be used for authentication in WebSocket headers
-                'expires_at' => now()->addHours(2)->toISOString()
+                'expires_at' => now()->addHours(2)->toISOString(),
+                'variables' => $variables,
+                'processed_prompts' => [
+                    'system_prompt' => $sessionData['processed_system_prompt'] ?? null,
+                    'greeting_message' => $sessionData['processed_greeting_message'] ?? null
+                ]
             ];
 
         } catch (\Exception $e) {
@@ -487,6 +506,200 @@ class ElevenLabsService
                 'trace' => $e->getTraceAsString()
             ]);
             
+            return null;
+        }
+    }
+
+    /**
+     * Transcribe audio using ElevenLabs Speech-to-Text
+     */
+    public function transcribeAudio(string $audioData, string $mimeType = 'audio/wav'): ?string
+    {
+        try {
+            // Decode base64 audio data
+            $audioContent = base64_decode($audioData);
+            
+            // Validate audio content
+            if (empty($audioContent)) {
+                Log::error('ElevenLabs STT: Empty audio content after base64 decode');
+                return null;
+            }
+
+            // Log audio details for debugging
+            Log::info('ElevenLabs STT: Processing audio', [
+                'original_base64_length' => strlen($audioData),
+                'decoded_content_length' => strlen($audioContent),
+                'content_starts_with' => substr(bin2hex($audioContent), 0, 16), // First 8 bytes in hex
+            ]);
+
+            // Create a temporary file for the audio
+            $tempFile = tempnam(sys_get_temp_dir(), 'audio_transcribe_') . '.wav';
+            
+            // For debugging - let's try to create a proper WAV file
+            $this->createValidWAVFile($audioContent, $tempFile);
+            
+            // Validate the created file
+            if (!file_exists($tempFile) || filesize($tempFile) === 0) {
+                Log::error('ElevenLabs STT: Failed to create valid temp file', [
+                    'file_exists' => file_exists($tempFile),
+                    'file_size' => file_exists($tempFile) ? filesize($tempFile) : 'N/A'
+                ]);
+                return null;
+            }
+
+            Log::info('ElevenLabs STT: Temp file created', [
+                'temp_file' => $tempFile,
+                'file_size' => filesize($tempFile)
+            ]);
+            
+
+            $response = Http::withHeaders([
+                'xi-api-key' => $this->apiKey,
+            ])->attach(
+                'file', file_get_contents($tempFile), 'audio.wav'
+            )->post("{$this->baseUrl}/speech-to-text", [
+                'model_id' => 'scribe_v1'
+            ]);
+
+            // Clean up temp file
+            unlink($tempFile);
+
+            if ($response->successful()) {
+                $result = $response->json();
+                $transcript = $result['text'] ?? null;
+                
+                Log::info('ElevenLabs transcription successful', [
+                    'transcript_length' => strlen($transcript ?? ''),
+                    'transcript' => $transcript
+                ]);
+                
+                return $transcript;
+            }
+
+            Log::error('ElevenLabs STT Error', [
+                'status' => $response->status(),
+                'response' => $response->json()
+            ]);
+            return null;
+        } catch (\Exception $e) {
+            Log::error('ElevenLabs STT Service Error: ' . $e->getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Create a valid WAV file from audio content
+     */
+    private function createValidWAVFile(string $audioContent, string $outputPath): void
+    {
+        // Check if the content already has WAV headers
+        if (substr($audioContent, 0, 4) === 'RIFF') {
+            // Already a WAV file, just write it
+            file_put_contents($outputPath, $audioContent);
+            return;
+        }
+
+        // If it's raw PCM data, we need to add WAV headers
+        $sampleRate = 16000; // 16kHz
+        $channels = 1; // Mono
+        $bitsPerSample = 16; // 16-bit
+        
+        $dataSize = strlen($audioContent);
+        $fileSize = $dataSize + 44 - 8; // Total file size - 8 bytes for RIFF header
+        
+        // Create WAV header
+        $header = '';
+        $header .= 'RIFF';                          // ChunkID
+        $header .= pack('V', $fileSize);            // ChunkSize
+        $header .= 'WAVE';                          // Format
+        $header .= 'fmt ';                          // Subchunk1ID
+        $header .= pack('V', 16);                   // Subchunk1Size (16 for PCM)
+        $header .= pack('v', 1);                    // AudioFormat (1 for PCM)
+        $header .= pack('v', $channels);            // NumChannels
+        $header .= pack('V', $sampleRate);          // SampleRate
+        $header .= pack('V', $sampleRate * $channels * $bitsPerSample / 8); // ByteRate
+        $header .= pack('v', $channels * $bitsPerSample / 8); // BlockAlign
+        $header .= pack('v', $bitsPerSample);       // BitsPerSample
+        $header .= 'data';                          // Subchunk2ID
+        $header .= pack('V', $dataSize);            // Subchunk2Size
+        
+        // Write WAV file
+        file_put_contents($outputPath, $header . $audioContent);
+    }
+
+    /**
+     * Create WebSocket connection to ElevenLabs
+     */
+    public function createWebSocketConnection(string $sessionId, string $agentId): array
+    {
+        try {
+            $websocketUrl = 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=' . $agentId;
+            
+            Log::info('Creating ElevenLabs WebSocket connection', [
+                'session_id' => $sessionId,
+                'agent_id' => $agentId,
+                'websocket_url' => $websocketUrl
+            ]);
+
+            return [
+                'websocket_url' => $websocketUrl,
+                'session_id' => $sessionId,
+                'agent_id' => $agentId,
+                'status' => 'connected',
+                'created_at' => now()->toISOString()
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Failed to create ElevenLabs WebSocket connection', [
+                'session_id' => $sessionId,
+                'agent_id' => $agentId,
+                'error' => $e->getMessage()
+            ]);
+            
+            throw $e;
+        }
+    }
+
+    /**
+     * Send audio data to ElevenLabs WebSocket
+     */
+    public function sendAudioToWebSocket(string $sessionId, string $audioData): ?array
+    {
+        try {
+            // For now, simulate the WebSocket communication
+            // In production, this would send to the actual ElevenLabs WebSocket connection
+            Log::info('Sending audio to ElevenLabs WebSocket', [
+                'session_id' => $sessionId,
+                'audio_size' => strlen($audioData)
+            ]);
+
+            // Simulate different types of responses from ElevenLabs
+            $responses = [
+                [
+                    'type' => 'audio',
+                    'audio_base64' => base64_encode('simulated_ai_response_' . time()),
+                    'transcript' => 'Thank you for your message. How can I assist you further?'
+                ],
+                [
+                    'type' => 'audio',
+                    'audio_base64' => base64_encode('simulated_ai_response_' . time()),
+                    'transcript' => 'I understand. Let me help you with that.'
+                ],
+                [
+                    'type' => 'audio',
+                    'audio_base64' => base64_encode('simulated_ai_response_' . time()),
+                    'transcript' => 'That\'s a great question. Here\'s what I can tell you about that.'
+                ]
+            ];
+
+            // Randomly return a response or null (to simulate when AI doesn't respond immediately)
+            return rand(0, 2) ? $responses[array_rand($responses)] : null;
+
+        } catch (\Exception $e) {
+            Log::error('Failed to send audio to ElevenLabs WebSocket', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage()
+            ]);
             return null;
         }
     }

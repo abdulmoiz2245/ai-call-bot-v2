@@ -33,6 +33,11 @@ return [
         'base_url' => env('ELEVENLABS_BASE_URL', 'https://api.elevenlabs.io/v1'),
     ],
 
+    'openai' => [
+        'api_key' => env('OPENAI_API_KEY'),
+        'base_url' => env('OPENAI_BASE_URL', 'https://api.openai.com/v1'),
+    ],
+
     'twilio' => [
         'account_sid' => env('TWILIO_ACCOUNT_SID'),
         'auth_token' => env('TWILIO_AUTH_TOKEN'),

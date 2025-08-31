@@ -1,6 +1,6 @@
 <template>
   <Dialog v-model:open="isOpen">
-    <DialogContent class="max-w-5xl max-h-[95vh] overflow-hidden bg-gradient-to-br from-slate-50 to-blue-50 border-0 shadow-2xl">
+    <DialogContent class="w-[80vw] sm:w-[80vw] md:w-[80vw] lg:w-[80vw] xl:w-[80vw] max-w-none sm:max-w-none md:max-w-none lg:max-w-none xl:max-w-none max-h-[95vh] overflow-hidden bg-gradient-to-br from-slate-50 to-blue-50 border-0 shadow-2xl">
       <!-- Header with ElevenLabs-style gradient -->
       <div class="bg-gradient-to-r from-blue-600 via-purple-600 to-indigo-600 -m-6 mb-6 p-6 text-white">
         <DialogHeader>
@@ -14,7 +14,7 @@
         </DialogHeader>
       </div>
 
-      <div class="space-y-8 p-2 overflow-y-auto max-h-[calc(95vh-200px)]">
+      <div class="space-y-8 p-2 overflow-y-auto max-h-[calc(95vh-300px)]">
         <!-- Variables Configuration Section -->
         <div v-if="variables.length > 0" class="space-y-6">
           <div class="flex items-center justify-between">
@@ -35,7 +35,7 @@
           </div>
           
           <!-- Variables Grid with ElevenLabs-style cards -->
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div class="space-y-4">
             <div
               v-for="variable in variables"
               :key="variable"
@@ -43,20 +43,28 @@
             >
               <div class="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               
-              <div class="relative space-y-3">
-                <Label :for="`var-${variable}`" class="text-sm font-semibold text-slate-700 flex items-center space-x-2">
-                  <span class="flex items-center space-x-1">
-                    <span class="text-slate-500">&#123;&#123;</span>
-                    <span class="text-blue-600">{{ variable }}</span>
-                    <span class="text-slate-500">&#125;&#125;</span>
-                  </span>
-                </Label>
-                <Input
-                  :id="`var-${variable}`"
-                  v-model="variableValues[variable]"
-                  :placeholder="`Enter ${variable}...`"
-                  class="w-full border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 bg-white/50"
-                />
+              <div class="relative flex items-center space-x-4">
+                <!-- Variable Label (20% width) -->
+                <div class="w-1/7 min-w-0">
+                  <Label :for="`var-${variable}`" class="text-sm font-semibold text-slate-700 mb-2 block">
+                    {{ formatVariableName(variable) }}
+                  </Label>
+                  <div class="text-xs text-slate-500 flex items-center space-x-1">
+                    <span class="text-slate-400">&#123;&#123;</span>
+                    <span class="text-blue-600 font-mono">{{ variable }}</span>
+                    <span class="text-slate-400">&#125;&#125;</span>
+                  </div>
+                </div>
+                
+                <!-- Input Field (80% width) -->
+                <div class="w-4/5">
+                  <Input
+                    :id="`var-${variable}`"
+                    v-model="variableValues[variable]"
+                    :placeholder="`Enter ${formatVariableName(variable).toLowerCase()}...`"
+                    class="w-full border-slate-200 focus:border-blue-500 focus:ring-blue-500/20 bg-white/50"
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -263,6 +271,13 @@ watch(isOpen, (newValue) => {
 })
 
 // Methods
+function formatVariableName(variable: string): string {
+  return variable
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ')
+}
+
 async function loadVariables() {
   loadingVariables.value = true
   try {
@@ -276,16 +291,30 @@ async function loadVariables() {
     const data = await response.json()
     
     if (data.success) {
-      variables.value = data.variables
-      // Initialize variable values
-      variables.value.forEach(variable => {
-        if (!variableValues.value[variable]) {
-          variableValues.value[variable] = ''
-        }
-      })
+      // Handle both array and object formats
+      let variablesData = data.variables || []
+      
+      // If variables is an object with numeric keys, convert to array
+      if (variablesData && typeof variablesData === 'object' && !Array.isArray(variablesData)) {
+        variablesData = Object.values(variablesData)
+      }
+      
+      variables.value = Array.isArray(variablesData) ? variablesData : []
+      
+      // Initialize variable values - ensure variables.value is an array
+      if (Array.isArray(variables.value)) {
+        variables.value.forEach(variable => {
+          if (!variableValues.value[variable]) {
+            variableValues.value[variable] = ''
+          }
+        })
+      }
+    } else {
+      variables.value = []
     }
   } catch (error) {
     console.error('Failed to load variables:', error)
+    variables.value = [] // Ensure variables is always an array
   } finally {
     loadingVariables.value = false
   }

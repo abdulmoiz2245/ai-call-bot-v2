@@ -5,6 +5,7 @@ namespace App\Http\Controllers;
 use App\Models\Agent;
 use App\Services\VoiceCallService;
 use App\Events\VoiceCallStatusUpdated;
+use App\Jobs\ProcessAudioForAgent;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Log;
@@ -667,6 +668,101 @@ class VoiceCallController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to process audio chunk'
+            ], 500);
+        }
+    }
+
+    /**
+     * Handle audio file upload directly and process through AI pipeline
+     */
+    public function handleAudioFile(Request $request): JsonResponse
+    {
+        $validator = Validator::make($request->all(), [
+            'session_id' => 'required|string',
+            'audio_file' => 'required|file|mimes:wav,mp3,m4a|max:10240', // 10MB max
+            'user_id' => 'sometimes|integer'
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Invalid audio file data',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $sessionId = $request->input('session_id');
+            $audioFile = $request->file('audio_file');
+            $userId = $request->input('user_id');
+
+            // Store file in a persistent location for background processing
+            $folderPath = "audio_processing/{$sessionId}";
+            $fileName = 'speech_' . uniqid() . '.' . $audioFile->getClientOriginalExtension();
+            $path = $audioFile->storeAs($folderPath, $fileName, 'local');
+            $absolutePath = storage_path('app/private/' . $path);
+
+            Log::info('Audio file uploaded and queued for processing', [
+                'session_id' => $sessionId,
+                'file_size' => $audioFile->getSize(),
+                'mime_type' => $audioFile->getMimeType(),
+                'storage_path' => $path,
+                'absolute_path' => $absolutePath
+            ]);
+
+            // Verify file exists before dispatching job
+            if (!file_exists($absolutePath)) {
+                Log::error('Uploaded file not found after storage', [
+                    'storage_path' => $path,
+                    'absolute_path' => $absolutePath
+                ]);
+                return response()->json([
+                    'success' => false, 
+                    'message' => 'Failed to store uploaded file'
+                ], 500);
+            }
+
+            $start = microtime(true);
+
+            Log::info('Dispatching audio processing job start', [
+                'session_id' => $sessionId,
+                'file_path' => $absolutePath,
+                'start_time' => $start
+            ]);
+
+            // Dispatch background job to process the audio
+            ProcessAudioForAgent::dispatch(
+                $sessionId,
+                $absolutePath,
+                [
+                    'user_id' => $userId,
+                    'timestamp' => time(),
+                    'start_time' => time(),
+                    'source' => 'file_upload',
+                    'original_filename' => $audioFile->getClientOriginalName(),
+                    'file_size' => $audioFile->getSize(),
+                    'mime_type' => $audioFile->getMimeType()
+                ]
+            );
+
+            // Return immediately - the job will broadcast the response when ready
+            return response()->json([
+                'success' => true,
+                'message' => 'Audio file uploaded and queued for processing',
+                'session_id' => $sessionId,
+                'processing_status' => 'queued'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to handle audio file upload', [
+                'session_id' => $request->input('session_id'),
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to process audio file: ' . $e->getMessage()
             ], 500);
         }
     }

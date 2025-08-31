@@ -332,6 +332,153 @@ function goBack() {
   router.visit('/agents')
 }
 
+// TEMPORARY: Send audio via API endpoint
+async function sendAudioViaAPI(base64Audio: string, options: any = {}) {
+  if (!sessionId.value) {
+    console.error('No session ID available for API call')
+    return
+  }
+
+  try {
+    const response = await fetch('/voice-call/audio-chunk', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        session_id: sessionId.value,
+        audio_data: base64Audio,
+        user_id: props.agent.id,
+        timestamp: Date.now(),
+        audio_format: options.audio_format || 'wav',
+        sample_rate: options.sample_rate || 16000
+      })
+    })
+
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('Audio sent via API successfully:', result.message)
+      
+      // If we get an AI response, play it
+      if (result.ai_response && result.ai_response.audio_base64) {
+        playAudioFromBase64(result.ai_response.audio_base64)
+        console.log('AI Response:', result.ai_response.transcript || 'No transcript available')
+      }
+    } else {
+      console.error('API audio submission failed:', result.message)
+    }
+  } catch (error) {
+    console.error('Failed to send audio via API:', error)
+  }
+}
+
+// NEW: Send audio file directly as binary upload (background processing)
+async function sendAudioFileViaAPI(audioBlob: Blob) {
+  if (!sessionId.value) {
+    console.error('No session ID available for API call')
+    return
+  }
+
+  try {
+    const formData = new FormData()
+    formData.append('audio_file', audioBlob, 'speech.wav')
+    formData.append('session_id', sessionId.value)
+    formData.append('user_id', props.agent.id.toString())
+    formData.append('timestamp', Date.now().toString())
+    formData.append('audio_format', 'wav')
+    formData.append('sample_rate', '16000')
+
+    const response = await fetch('/voice-call/audio-file', {
+      method: 'POST',
+      headers: {
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: formData
+    })
+
+    const result = await response.json()
+    
+    if (result.success) {
+      console.log('Audio file uploaded and queued for processing:', result.message)
+      console.log('Processing status:', result.processing_status)
+      
+      // Show processing indicator
+      if (result.processing_status === 'queued') {
+        console.log('Audio is being processed in the background. Waiting for AI response via WebSocket...')
+        // You could show a spinner or "processing..." message here
+      }
+      
+      // Note: AI response will come via WebSocket broadcast, not in this response
+      // The audio event listener will handle playing the response audio
+    } else {
+      console.error('API audio file submission failed:', result.message)
+    }
+  } catch (error) {
+    console.error('Failed to send audio file via API:', error)
+  }
+}
+
+// Helper function to create proper WAV file from Float32Array
+function createWAVFile(audioData: Float32Array, sampleRate: number): ArrayBuffer {
+  const numChannels = 1 // Mono
+  const bitsPerSample = 16
+  const bytesPerSample = bitsPerSample / 8
+  const blockAlign = numChannels * bytesPerSample
+  const byteRate = sampleRate * blockAlign
+  const dataLength = audioData.length * bytesPerSample
+  const bufferLength = 44 + dataLength // WAV header is 44 bytes
+  
+  const buffer = new ArrayBuffer(bufferLength)
+  const view = new DataView(buffer)
+  
+  // WAV header
+  const writeString = (offset: number, string: string) => {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i))
+    }
+  }
+  
+  writeString(0, 'RIFF')                                    // ChunkID
+  view.setUint32(4, bufferLength - 8, true)                // ChunkSize
+  writeString(8, 'WAVE')                                    // Format
+  writeString(12, 'fmt ')                                   // Subchunk1ID
+  view.setUint32(16, 16, true)                              // Subchunk1Size
+  view.setUint16(20, 1, true)                               // AudioFormat (PCM)
+  view.setUint16(22, numChannels, true)                     // NumChannels
+  view.setUint32(24, sampleRate, true)                      // SampleRate
+  view.setUint32(28, byteRate, true)                        // ByteRate
+  view.setUint16(32, blockAlign, true)                      // BlockAlign
+  view.setUint16(34, bitsPerSample, true)                   // BitsPerSample
+  writeString(36, 'data')                                   // Subchunk2ID
+  view.setUint32(40, dataLength, true)                      // Subchunk2Size
+  
+  // Convert Float32Array to 16-bit PCM
+  let offset = 44
+  for (let i = 0; i < audioData.length; i++) {
+    // Convert float (-1 to 1) to 16-bit integer (-32768 to 32767)
+    const sample = Math.max(-1, Math.min(1, audioData[i]))
+    const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
+    view.setInt16(offset, intSample, true)
+    offset += 2
+  }
+  
+  return buffer
+}
+
+// Helper function to convert ArrayBuffer to base64
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) {
+    binary += String.fromCharCode(bytes[i])
+  }
+  return btoa(binary)
+}
+
 function startCall() {
   callStatus.value = 'connecting'
   
@@ -441,14 +588,43 @@ async function startWebSocketCall() {
     // Listen for audio responses on private audio channel
     if (privateAudioChannel) {
       privateAudioChannel.listen('.voice.call.audio', (event: any) => {
-        console.log('Audio event received:', event.direction, event.timestamp)
+        console.log('Audio event received:', event.direction, event.timestamp, event.metadata)
         
-        if (event.direction === 'outgoing' && event.audio_data) {
-          // Play AI response audio
-          playAudioFromBase64(event.audio_data)
+        if (event.direction === 'outgoing') {
+          // Handle AI response audio
+          if (event.metadata?.audio_url) {
+            // Play audio from URL (new method for large files)
+            console.log('Received audio_url:', event.metadata.audio_url)
+            playAudioFromUrl(event.metadata.audio_url)
+          } else if (event.audio_data) {
+            // Fallback: Play audio from base64 (for smaller files)
+            playAudioFromBase64(event.audio_data)
+            console.log('Playing AI response from base64')
+          } else {
+            console.warn('No audio data or URL received in outgoing event')
+          }
           
           if (event.metadata?.transcript) {
             console.log('AI response:', event.metadata.transcript)
+          }
+          
+          if (event.metadata?.user_transcript) {
+            console.log('User said:', event.metadata.user_transcript)
+          }
+          
+          if (event.metadata?.processing_time) {
+            console.log('Processing time:', event.metadata.processing_time + 's')
+          }
+        } else if (event.direction === 'error') {
+          // Handle processing errors
+          console.error('Audio processing error:', event.metadata?.message || 'Unknown error')
+          
+          if (event.metadata?.type === 'processing_error') {
+            console.error('Background processing failed:', event.metadata.message)
+            // You could show an error message to the user here
+          } else if (event.metadata?.type === 'processing_failed') {
+            console.error('Background processing failed permanently:', event.metadata.message)
+            // You could show a permanent error message to the user here
           }
         }
       })
@@ -503,35 +679,30 @@ async function startWebSocketAudioStreaming() {
       onSpeechEnd: (audio) => {
         console.log('Speech ended, processing audio chunk...', audio.length)
         
-        // Convert Float32Array to base64 audio data
-        const audioBuffer = new ArrayBuffer(audio.length * 4)
-        const view = new Float32Array(audioBuffer)
-        view.set(audio)
+        // Convert Float32Array to proper WAV format
+        const wavBuffer = createWAVFile(audio, 16000) // 16kHz sample rate
         
-        // Convert to wav format (simplified)
-        const reader = new FileReader()
-        const blob = new Blob([audioBuffer], { type: 'audio/wav' })
+        // Create a Blob from the audio buffer for direct file upload
+        const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' })
         
-        reader.onload = () => {
-          const base64Audio = (reader.result as string).split(',')[1]
-          
-          // Send audio data via whisper event on regular channel
-          if (regularChannel) {
-            regularChannel.whisper('client-audio-data', {
-              session_id: sessionId.value,
-              audio_data: base64Audio,
-              user_id: props.agent.id,
-              timestamp: Date.now(),
-              audio_format: 'wav',
-              sample_rate: 16000
-            })
-            console.log('Audio chunk sent via whisper event')
-          } else {
-            console.warn('Regular channel not available')
-          }
-        }
+        // TEMPORARY: Send via API as actual file instead of base64
+        sendAudioFileViaAPI(audioBlob)
         
-        reader.readAsDataURL(blob)
+        // TODO: Re-enable WebSocket when whisper events are fixed
+        // Send audio data via whisper event on regular channel
+        // if (regularChannel) {
+        //   regularChannel.whisper('client-audio-data', {
+        //     session_id: sessionId.value,
+        //     audio_data: base64Audio,
+        //     user_id: props.agent.id,
+        //     timestamp: Date.now(),
+        //     audio_format: 'wav',
+        //     sample_rate: 16000
+        //   })
+        //   console.log('Audio chunk sent via whisper event')
+        // } else {
+        //   console.warn('Regular channel not available')
+        // }
       },
       onVADMisfire: () => {
         console.log('VAD misfire detected')
@@ -562,14 +733,18 @@ function startFallbackRecording() {
         reader.onload = async () => {
           const base64Audio = (reader.result as string).split(',')[1]
           
-          if (regularChannel) {
-            regularChannel.whisper('client-audio-data', {
-              session_id: sessionId.value,
-              audio_data: base64Audio,
-              user_id: props.agent.id,
-              timestamp: Date.now()
-            })
-          }
+          // TEMPORARY: Send via API instead of WebSocket whisper event
+          await sendAudioViaAPI(base64Audio)
+          
+          // TODO: Re-enable WebSocket when whisper events are fixed
+          // if (regularChannel) {
+          //   regularChannel.whisper('client-audio-data', {
+          //     session_id: sessionId.value,
+          //     audio_data: base64Audio,
+          //     user_id: props.agent.id,
+          //     timestamp: Date.now()
+          //   })
+          // }
         }
         reader.readAsDataURL(event.data)
       } catch (error) {
@@ -704,6 +879,60 @@ function playAudioFromBase64(base64Audio: string) {
       })
   } catch (error) {
     console.error('Failed to create audio from base64:', error)
+  }
+}
+
+function playAudioFromUrl(audioUrl: string) {
+  try {
+    console.log('Attempting to play audio from URL:', audioUrl)
+    
+    // Create audio element and play from URL
+    const audio = new Audio(audioUrl)
+    
+    // Add error handling for debugging
+    audio.addEventListener('error', (e) => {
+      console.error('Audio error details:', {
+        error: e,
+        audioUrl: audioUrl,
+        networkState: audio.networkState,
+        readyState: audio.readyState
+      })
+      
+      // Fallback: try fetching the audio and creating blob URL
+      console.log('Trying blob URL fallback...')
+      fetch(audioUrl)
+        .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+          }
+          return response.blob()
+        })
+        .then(blob => {
+          const blobUrl = URL.createObjectURL(blob)
+          const fallbackAudio = new Audio(blobUrl)
+          return fallbackAudio.play()
+        })
+        .then(() => {
+          console.log('Fallback audio played successfully')
+        })
+        .catch(fallbackError => {
+          console.error('Fallback audio also failed:', fallbackError)
+        })
+    })
+    
+    audio.addEventListener('loadeddata', () => {
+      console.log('Audio loaded successfully, duration:', audio.duration)
+    })
+    
+    audio.play()
+      .then(() => {
+        console.log('AI response audio played successfully from URL:', audioUrl)
+      })
+      .catch((error) => {
+        console.error('Failed to play AI response audio from URL:', error)
+      })
+  } catch (error) {
+    console.error('Failed to create audio from URL:', error)
   }
 }
 
