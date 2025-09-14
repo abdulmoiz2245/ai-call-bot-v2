@@ -3,8 +3,11 @@
 namespace App\Http\Controllers;
 
 use App\Models\Agent;
+use App\Models\Call;
 use App\Services\ElevenLabsService;
 use App\Services\VoiceCallService;
+use App\Services\LiveKitService;
+use DB;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -14,7 +17,8 @@ class AgentController extends Controller
 {
     public function __construct(
         private ElevenLabsService $elevenLabsService,
-        private VoiceCallService $voiceCallService
+        private VoiceCallService $voiceCallService,
+        private LiveKitService $liveKitService
     ) {}
 
     /**
@@ -432,6 +436,7 @@ class AgentController extends Controller
             'name' => $agent->name,
             'description' => $agent->description,
             'voice_id' => $agent->voice_id,
+            'language' => $agent->language,
             'company_name' => $agent->company->name ?? '',
             'system_prompt' => $agent->getProcessedSystemPrompt($variables),
             'greeting_message' => $agent->getProcessedGreetingMessage($variables),
@@ -440,9 +445,40 @@ class AgentController extends Controller
             'variables' => $variables
         ];
 
+        Log::info('Agent call test initialized with language support', [
+            'agent_id' => $agent->id,
+            'agent_name' => $agent->name,
+            'language' => $agent->language,
+            'voice_id' => $agent->voice_id,
+            'variables_count' => count($variables)
+        ]);
+
+        // Prepare greeting audio
+        $greetingAudio = null;
+        $greetingReady = false;
+        
+        try {
+            $greetingAudio = $this->voiceCallService->prepareGreetingAudio($agent, $variables);
+            $greetingReady = !empty($greetingAudio);
+            
+            Log::info('Greeting audio prepared for call test', [
+                'agent_id' => $agent->id,
+                'has_greeting_audio' => $greetingReady,
+                'variables' => $variables
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to prepare greeting audio for call test', [
+                'agent_id' => $agent->id,
+                'variables' => $variables,
+                'error' => $e->getMessage()
+            ]);
+        }
+
         return Inertia::render('Agents/CallTest', [
             'agent' => $processedAgent,
-            'variables' => $variables
+            'variables' => $variables,
+            'greeting_audio' => $greetingAudio,
+            'greeting_ready' => $greetingReady
         ]);
     }
 
@@ -510,6 +546,234 @@ class AgentController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to initialize voice conversation: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get call session status for debugging
+     */
+    public function getCallStatus(string $sessionId)
+    {
+        try {
+            $sessionData = $this->voiceCallService->getSessionData($sessionId);
+            
+            if (!$sessionData) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Session not found'
+                ], 404);
+            }
+            
+            return response()->json([
+                'success' => true,
+                'session_id' => $sessionId,
+                'status' => $sessionData['status'] ?? 'unknown',
+                'session_data' => $sessionData
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Failed to get call status', [
+                'session_id' => $sessionId,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get call status'
+            ], 500);
+        }
+    }
+
+    /**
+     * Start a LiveKit voice call session
+     */
+    public function startLiveKitCall(Request $request, Agent $agent)
+    {
+        try {
+            $validated = $request->validate([
+                'phone_number' => 'required|string',
+                'caller_name' => 'nullable|string',
+                'dynamic_variables' => 'nullable|array', // Accept dynamic variables from frontend
+            ]);
+
+            // Create a voice call record
+            $voiceCall = \App\Models\VoiceCall::create([
+                'agent_id' => $agent->id,
+                'phone_number' => $validated['phone_number'],
+                'caller_name' => $validated['caller_name'] ?? null,
+                'status' => 'initiated',
+                'call_type' => 'outbound',
+                'created_by' => Auth::id(),
+                'company_id' => $agent->company_id,
+            ]);
+
+            // Start LiveKit session with dynamic variables
+            $dynamicVariables = $validated['dynamic_variables'] ?? [];
+            $sessionData = $this->liveKitService->startCall($voiceCall, $dynamicVariables);
+
+            // Update voice call with LiveKit data
+            $voiceCall->update([
+                'session_data' => $sessionData,
+                'status' => 'active'
+            ]);
+
+            Log::info('LiveKit call session started', [
+                'agent_id' => $agent->id,
+                'call_id' => $voiceCall->id,
+                'room_name' => $sessionData['room_name']
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'call_id' => $voiceCall->id,
+                'session_data' => $sessionData,
+                'message' => 'LiveKit call session started successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to start LiveKit call', [
+                'agent_id' => $agent->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to start LiveKit call: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Get LiveKit room token for frontend
+     */
+    public function getLiveKitToken(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'room_name' => 'required|string',
+                'participant_name' => 'required|string',
+            ]);
+
+            $connectionInfo = $this->liveKitService->getConnectionInfo(
+                $validated['room_name'],
+                $validated['participant_name']
+            );
+
+            return response()->json([
+                'success' => true,
+                'connection_info' => $connectionInfo
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to get LiveKit token', [
+                'error' => $e->getMessage(),
+                'request_data' => $validated ?? []
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to get LiveKit token'
+            ], 500);
+        }
+    }
+
+    /**
+     * End a LiveKit voice call session
+     */
+    public function endLiveKitCall(Request $request)
+    {
+        try {
+            $validated = $request->validate([
+                'call_id' => 'required|integer',
+            ]);
+
+            $voiceCall = \App\Models\VoiceCall::findOrFail($validated['call_id']);
+            
+            // End LiveKit session
+            $this->liveKitService->endCall($voiceCall);
+
+            // Update voice call status
+            $voiceCall->update([
+                'status' => 'completed',
+                'ended_at' => now()
+            ]);
+
+            Log::info('LiveKit call session ended', [
+                'call_id' => $voiceCall->id,
+                'agent_id' => $voiceCall->agent_id
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'LiveKit call session ended successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to end LiveKit call', [
+                'error' => $e->getMessage(),
+                'call_id' => $validated['call_id'] ?? null
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to end LiveKit call'
+            ], 500);
+        }
+    }
+
+    /**
+     * Start a LiveKit test call (no database record)
+     */
+    public function startLiveKitTest(Request $request, Agent $agent)
+    {
+        try {
+            $validated = $request->validate([
+                'variables' => 'nullable|array',
+            ]);
+            
+            $dynamicVariables = $validated['variables'] ?? [];
+            $sessionData = DB::transaction(function() use ($agent, $dynamicVariables) {
+            
+                $callLog = Call::create([
+                    'agent_id' => $agent->id,
+                    'company_id' => $agent->company_id,
+                    'created_by' => Auth::id(),
+                ]);
+
+                $sessionData = $this->liveKitService->startTestCall($agent, $dynamicVariables);
+                $callLog->update([
+                    'call_sid' => $sessionData['room_name'] ?? null,
+                    'started_at' => now(),
+                    'metadata' => $sessionData['room_metadata'] ?? null,
+                ]);
+
+                Log::info('LiveKit test call session started', [
+                    'agent_id' => $agent->id,
+                    'room_name' => $sessionData['room_name'] ?? null,
+                    'dynamic_variables' => $dynamicVariables
+                ]);
+
+                return $sessionData;
+
+                
+            });
+            return response()->json([
+                'success' => true,
+                'session_data' => $sessionData,
+                'message' => 'Call session started successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            Log::error('Failed to start test call', [
+                'agent_id' => $agent->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to start test call: ' . $e->getMessage()
             ], 500);
         }
     }

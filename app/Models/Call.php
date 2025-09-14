@@ -28,6 +28,8 @@ class Call extends Model
         'ended_at',
         'failure_reason',
         'retry_count',
+        'call_sid',
+        'created_by',
     ];
 
     protected $casts = [

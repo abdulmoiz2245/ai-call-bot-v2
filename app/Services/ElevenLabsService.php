@@ -44,7 +44,7 @@ class ElevenLabsService
     /**
      * Generate speech from text
      */
-    public function textToSpeech(string $text, string $voiceId, array $voiceSettings = []): ?string
+    public function textToSpeech(string $text, string $voiceId, array $voiceSettings = [], ?string $language = null): ?string
     {
         try {
             $defaultSettings = [
@@ -56,6 +56,17 @@ class ElevenLabsService
 
             $settings = array_merge($defaultSettings, $voiceSettings);
 
+            // Select appropriate model based on language
+            $modelId = $this->getModelIdForLanguage($language);
+
+            Log::info('ElevenLabs TTS Request', [
+                'voice_id' => $voiceId,
+                'language' => $language,
+                'model_id' => $modelId,
+                'text_length' => strlen($text),
+                'voice_settings' => $settings
+            ]);
+
             $response = Http::withHeaders([
                 'xi-api-key' => $this->apiKey,
                 'Content-Type' => 'application/json',
@@ -63,7 +74,7 @@ class ElevenLabsService
                 'x-region' => 'europe-west4'
             ])->post("https://api-global-preview.elevenlabs.io/v1/text-to-speech/{$voiceId}", [
                 'text' => $text,
-                'model_id' => 'eleven_flash_v2_5',
+                'model_id' => $modelId,
                 'voice_settings' => $settings,
             ]);
 
@@ -303,6 +314,7 @@ class ElevenLabsService
                         // 'built_in_tools' => $this->mapAgentTools($agent),
                     ],
                 ],
+                'language' => $agent->language ?? 'en', // Add language support for ElevenLabs
             ],
         ];
     }
@@ -466,8 +478,20 @@ class ElevenLabsService
             }
 
             // For ElevenLabs Conversational AI, we connect directly via WebSocket
-            // The WebSocket URL format is: wss://api.elevenlabs.io/v1/convai/conversation?agent_id={agent_id}
+            // The WebSocket URL format includes language parameter for better conversation handling
             $websocketUrl = 'wss://api.elevenlabs.io/v1/convai/conversation?agent_id=' . $agent->elevenlabs_agent_id;
+            
+            // Add language parameter if available
+            if ($agent->language) {
+                $langCode = strtolower(substr($agent->language, 0, 2));
+                $websocketUrl .= '&language=' . $langCode;
+                
+                Log::info('Adding language parameter to ElevenLabs WebSocket URL', [
+                    'agent_id' => $agent->id,
+                    'language' => $agent->language,
+                    'language_code' => $langCode
+                ]);
+            }
 
             // Generate a unique session ID for this conversation
             $sessionId = uniqid('conv_' . $agent->elevenlabs_agent_id . '_');
@@ -513,7 +537,7 @@ class ElevenLabsService
     /**
      * Transcribe audio using ElevenLabs Speech-to-Text
      */
-    public function transcribeAudio(string $audioData, string $mimeType = 'audio/wav'): ?string
+    public function transcribeAudio(string $audioData, string $mimeType = 'audio/wav', ?string $language = null): ?string
     {
         try {
             // Decode base64 audio data
@@ -530,6 +554,7 @@ class ElevenLabsService
                 'original_base64_length' => strlen($audioData),
                 'decoded_content_length' => strlen($audioContent),
                 'content_starts_with' => substr(bin2hex($audioContent), 0, 16), // First 8 bytes in hex
+                'language' => $language
             ]);
 
             // Create a temporary file for the audio
@@ -553,13 +578,27 @@ class ElevenLabsService
             ]);
             
 
+            // Prepare request payload with language support
+            $payload = [
+                'model_id' => 'scribe_v1'
+            ];
+
+            // Add language parameter if provided
+            if ($language) {
+                $langCode = strtolower(substr($language, 0, 2));
+                $payload['language'] = $langCode;
+                
+                Log::info('ElevenLabs STT: Adding language parameter', [
+                    'original_language' => $language,
+                    'language_code' => $langCode
+                ]);
+            }
+
             $response = Http::withHeaders([
                 'xi-api-key' => $this->apiKey,
             ])->attach(
                 'file', file_get_contents($tempFile), 'audio.wav'
-            )->post("{$this->baseUrl}/speech-to-text", [
-                'model_id' => 'scribe_v1'
-            ]);
+            )->post("{$this->baseUrl}/speech-to-text", $payload);
 
             // Clean up temp file
             unlink($tempFile);
@@ -702,5 +741,36 @@ class ElevenLabsService
             ]);
             return null;
         }
+    }
+
+    /**
+     * Get the appropriate model ID based on language
+     */
+    private function getModelIdForLanguage(?string $language): string
+    {
+        if (!$language) {
+            return 'eleven_flash_v2_5'; // Default model
+        }
+
+        // Map languages to appropriate ElevenLabs models
+        $languageModelMap = [
+            'en' => 'eleven_flash_v2_5',           // English - fastest, high quality
+            'es' => 'eleven_multilingual_v2',      // Spanish
+            'fr' => 'eleven_multilingual_v2',      // French
+            'de' => 'eleven_multilingual_v2',      // German
+            'it' => 'eleven_multilingual_v2',      // Italian
+            'pt' => 'eleven_multilingual_v2',      // Portuguese
+            'pl' => 'eleven_multilingual_v2',      // Polish
+            'hi' => 'eleven_multilingual_v2',      // Hindi
+            'ar' => 'eleven_multilingual_v2',      // Arabic
+            'zh' => 'eleven_multilingual_v2',      // Chinese
+            'ja' => 'eleven_multilingual_v2',      // Japanese
+            'ko' => 'eleven_multilingual_v2',      // Korean
+        ];
+
+        // Get the first two characters of language code (e.g., 'en-US' -> 'en')
+        $langCode = strtolower(substr($language, 0, 2));
+        
+        return $languageModelMap[$langCode] ?? 'eleven_multilingual_v2';
     }
 }

@@ -66,4 +66,10 @@ return [
         ],
     ],
 
+    'livekit' => [
+        'url' => env('LIVEKIT_URL', 'wss://your-livekit-server.com'),
+        'api_key' => env('LIVEKIT_API_KEY'),
+        'api_secret' => env('LIVEKIT_API_SECRET'),
+    ],
+
 ];

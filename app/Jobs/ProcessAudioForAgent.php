@@ -56,10 +56,13 @@ class ProcessAudioForAgent implements ShouldQueue
                 // Store the audio response as a file instead of broadcasting large base64
                 $responseAudioPath = $this->storeResponseAudio($aiResponse['audio_base64'], $this->sessionId);
               
+                // Determine broadcast type based on response
+                $broadcastType = $aiResponse['type'] === 'call_end' ? 'call_end' : 'outgoing';
+                
                 broadcast(new VoiceCallAudioEvent(
                     $this->sessionId,
                     '', // Don't send base64 audio data
-                    'outgoing',
+                    $broadcastType,
                     [
                         'type' => $aiResponse['type'] ?? 'ai_response',
                         'transcript' => $aiResponse['transcript'] ?? null,
@@ -70,19 +73,27 @@ class ProcessAudioForAgent implements ShouldQueue
                         'audio_url' => $responseAudioPath ? config('app.url') . "/audio-response/{$this->sessionId}/" . basename($responseAudioPath) : null,
                         'audio_file' => $responseAudioPath,
                         'timestamp' => time(),
-                        'processing_time' => $this->metadata['start_time'] ? (time() - $this->metadata['start_time']) : null
+                        'processing_time' => $this->metadata['start_time'] ? (time() - $this->metadata['start_time']) : null,
+                        'request_id' => $aiResponse['request_id'] ?? null,
+                        'audio_id' => $aiResponse['audio_id'] ?? null,
+                        'should_end_call' => $aiResponse['should_end_call'] ?? false,
+                        'call_end_after_audio' => $aiResponse['call_end_after_audio'] ?? false
                     ]
                 ));
 
                 Log::info('AI response broadcasted successfully with audio URL', [
                     'session_id' => $this->sessionId,
                     'response_type' => $aiResponse['type'] ?? 'ai_response',
+                    'broadcast_type' => $broadcastType,
                     'transcript_length' => strlen($aiResponse['transcript'] ?? ''),
                     'audio_url' => $responseAudioPath ? config('app.url') . "/audio-response/{$this->sessionId}/" . basename($responseAudioPath) : null,
                     'audio_file_path' => $responseAudioPath,
                     'config_url' => config('app.url'),
                     'user_transcript' => $aiResponse['user_transcript'] ?? null,
-                    'ai_transcript' => $aiResponse['transcript'] ?? null
+                    'ai_transcript' => $aiResponse['transcript'] ?? null,
+                    'should_end_call' => $aiResponse['should_end_call'] ?? false,
+                    'request_id' => $aiResponse['request_id'] ?? null,
+                    'audio_id' => $aiResponse['audio_id'] ?? null
                 ]);
             } else {
                 Log::warning('No AI response generated for audio file', [

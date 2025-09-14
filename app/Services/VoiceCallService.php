@@ -329,21 +329,7 @@ class VoiceCallService
 
             
             try {
-                // Step 1: Transcribe audio using ElevenLabs Speech-to-Text
-                $elevenLabsService = app(ElevenLabsService::class);
-                $transcript = $elevenLabsService->transcribeAudio($audioData);
-                
-                if (!$transcript) {
-                    Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
-                    return null;
-                }
-
-                Log::info('Audio transcribed successfully with ElevenLabs', [
-                    'session_id' => $sessionId,
-                    'transcript' => $transcript
-                ]);
-
-                // Step 2: Get AI response using OpenAI ChatGPT
+                // Step 1: Get session data and agent for language support
                 $sessionData = $this->getSessionData($sessionId);
 
                 if (!$sessionData) {
@@ -356,6 +342,23 @@ class VoiceCallService
                     Log::error('Agent not found', ['session_id' => $sessionId, 'agent_id' => $sessionData['agent_id']]);
                     return null;
                 }
+                
+                // Step 2: Transcribe audio using ElevenLabs Speech-to-Text with language support
+                $elevenLabsService = app(ElevenLabsService::class);
+                $transcript = $elevenLabsService->transcribeAudio($audioData, 'audio/wav', $agent->language);
+                
+                if (!$transcript) {
+                    Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
+                    return null;
+                }
+
+                Log::info('Audio transcribed successfully with ElevenLabs', [
+                    'session_id' => $sessionId,
+                    'transcript' => $transcript,
+                    'language' => $agent->language
+                ]);
+
+                // Step 3: Get AI response using OpenAI ChatGPT
 
                 // Get processed prompts with variables from session
                 $variables = $sessionData['variables'] ?? [];
@@ -376,7 +379,7 @@ class VoiceCallService
                 ]);
                 
                 $openaiService = app(OpenAIService::class);
-                $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory, $processedSystemPrompt);
+                $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory, $processedSystemPrompt, $agent->language);
                 
                 if (!$aiResponse) {
                     Log::warning('Failed to generate AI response', ['session_id' => $sessionId]);
@@ -402,9 +405,9 @@ class VoiceCallService
                         'cache_hit' => true
                     ]);
                 } else {
-                    // Generate new audio using ElevenLabs TTS
+                    // Generate new audio using ElevenLabs TTS with language support
                     $elevenLabsService = app(ElevenLabsService::class);
-                    $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $voiceId);
+                    $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $voiceId, [], $agent->language);
                     
                     if (!$audioBase64) {
                         Log::warning('Failed to convert text to speech with ElevenLabs', ['session_id' => $sessionId]);
@@ -555,21 +558,7 @@ class VoiceCallService
     private function sendAudioToElevenLabsWebSocket(string $sessionId, string $audioData): ?array
     {
         try {
-            // Step 1: Transcribe audio using ElevenLabs Speech-to-Text
-            $elevenLabsService = app(ElevenLabsService::class);
-            $transcript = $elevenLabsService->transcribeAudio($audioData);
-            
-            if (!$transcript) {
-                Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
-                return null;
-            }
-
-            Log::info('Audio transcribed successfully with ElevenLabs', [
-                'session_id' => $sessionId,
-                'transcript' => $transcript
-            ]);
-
-            // Step 2: Get AI response using OpenAI ChatGPT
+            // Step 1: Get session data and agent for language support
             $sessionData = $this->getSessionData($sessionId);
             if (!$sessionData) {
                 Log::error('Session data not found', ['session_id' => $sessionId]);
@@ -581,12 +570,28 @@ class VoiceCallService
                 Log::error('Agent not found', ['session_id' => $sessionId, 'agent_id' => $sessionData['agent_id']]);
                 return null;
             }
+            
+            // Step 2: Transcribe audio using ElevenLabs Speech-to-Text with language support
+            $elevenLabsService = app(ElevenLabsService::class);
+            $transcript = $elevenLabsService->transcribeAudio($audioData, 'audio/wav', $agent->language);
+            
+            if (!$transcript) {
+                Log::warning('Failed to transcribe audio with ElevenLabs', ['session_id' => $sessionId]);
+                return null;
+            }
 
-            // Get conversation history from session or cache
+            Log::info('Audio transcribed successfully with ElevenLabs', [
+                'session_id' => $sessionId,
+                'transcript' => $transcript,
+                'language' => $agent->language
+            ]);
+
+            // Step 3: Get conversation history from session or cache
             $conversationHistory = $this->getConversationHistory($sessionId);
             
+            // Step 4: Generate AI response using OpenAI ChatGPT with language support
             $openaiService = app(OpenAIService::class);
-            $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory);
+            $aiResponse = $openaiService->generateResponse($transcript, $agent, $conversationHistory, null, $agent->language);
             
             if (!$aiResponse) {
                 Log::warning('Failed to generate AI response', ['session_id' => $sessionId]);
@@ -598,8 +603,8 @@ class VoiceCallService
                 'response' => $aiResponse['text']
             ]);
 
-            // Step 3: Convert AI response to speech using ElevenLabs TTS
-            $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $agent->voice_id);
+            // Step 5: Convert AI response to speech using ElevenLabs TTS with language support
+            $audioBase64 = $elevenLabsService->textToSpeech($aiResponse['text'], $agent->voice_id, [], $agent->language);
             
             if (!$audioBase64) {
                 Log::warning('Failed to convert text to speech with ElevenLabs', ['session_id' => $sessionId]);
@@ -1009,5 +1014,377 @@ class VoiceCallService
             'audio_length' => strlen($audioBase64),
             'expiry_hours' => 24
         ]);
+    }
+
+    /**
+     * Generate cache key for greeting audio based on voice_id and processed greeting message
+     */
+    private function generateGreetingAudioCacheKey(string $voiceId, string $greetingText): string
+    {
+        $textHash = md5(trim($greetingText));
+        return "voice_{$voiceId}_greeting_audio_{$textHash}";
+    }
+
+    /**
+     * Check if greeting audio exists in cache
+     */
+    public function hasGreetingAudio(Agent $agent, array $variables = []): bool
+    {
+        $processedGreeting = $agent->getProcessedGreetingMessage($variables);
+        
+        if (empty($processedGreeting)) {
+            return false;
+        }
+
+        $voiceId = $agent->voice_id ?: 'default';
+        $cacheKey = $this->generateGreetingAudioCacheKey($voiceId, $processedGreeting);
+        
+        return Redis::exists($cacheKey);
+    }
+
+    /**
+     * Get greeting audio from cache
+     */
+    public function getGreetingAudio(Agent $agent, array $variables = []): ?string
+    {
+        $processedGreeting = $agent->getProcessedGreetingMessage($variables);
+        
+        if (empty($processedGreeting)) {
+            return null;
+        }
+
+        $voiceId = $agent->voice_id ?: 'default';
+        $cacheKey = $this->generateGreetingAudioCacheKey($voiceId, $processedGreeting);
+        
+        $cachedAudio = Redis::get($cacheKey);
+        
+        if ($cachedAudio) {
+            Log::info('Found cached greeting audio', [
+                'voice_id' => $voiceId,
+                'cache_key' => $cacheKey,
+                'greeting_preview' => substr($processedGreeting, 0, 100) . '...',
+                'cached_audio_length' => strlen($cachedAudio)
+            ]);
+            return $cachedAudio;
+        }
+        
+        return null;
+    }
+
+    /**
+     * Generate and cache greeting audio
+     */
+    public function generateGreetingAudio(Agent $agent, array $variables = []): ?array
+    {
+        $processedGreeting = $agent->getProcessedGreetingMessage($variables);
+        
+        if (empty($processedGreeting)) {
+            Log::warning('No greeting message to generate audio for', [
+                'agent_id' => $agent->id,
+                'agent_name' => $agent->name
+            ]);
+            return null;
+        }
+
+        $voiceId = $agent->voice_id ?: 'default';
+        
+        // Check if already cached
+        $existingAudio = $this->getGreetingAudio($agent, $variables);
+        if ($existingAudio) {
+            return [
+                'audio_base64' => $existingAudio,
+                'greeting_text' => $processedGreeting,
+                'voice_id' => $voiceId,
+                'cached' => true
+            ];
+        }
+
+        try {
+            Log::info('Generating greeting audio', [
+                'agent_id' => $agent->id,
+                'agent_name' => $agent->name,
+                'voice_id' => $voiceId,
+                'greeting_text' => $processedGreeting,
+                'variables' => $variables
+            ]);
+
+            // Generate audio using ElevenLabs TTS with language support
+            $elevenLabsService = app(ElevenLabsService::class);
+            $audioBase64 = $elevenLabsService->textToSpeech($processedGreeting, $voiceId, [], $agent->language);
+            
+            if (!$audioBase64) {
+                Log::error('Failed to generate greeting audio with ElevenLabs', [
+                    'agent_id' => $agent->id,
+                    'voice_id' => $voiceId,
+                    'greeting_text' => $processedGreeting
+                ]);
+                return null;
+            }
+            
+            // Cache the greeting audio with longer expiry (24 hours)
+            $cacheKey = $this->generateGreetingAudioCacheKey($voiceId, $processedGreeting);
+            Redis::setex($cacheKey, 86400, $audioBase64); // 24 hours
+            
+            Log::info('Generated and cached greeting audio successfully', [
+                'agent_id' => $agent->id,
+                'voice_id' => $voiceId,
+                'audio_length' => strlen($audioBase64),
+                'cache_key' => $cacheKey,
+                'greeting_preview' => substr($processedGreeting, 0, 100) . '...'
+            ]);
+            
+            return [
+                'audio_base64' => $audioBase64,
+                'greeting_text' => $processedGreeting,
+                'voice_id' => $voiceId,
+                'cached' => false
+            ];
+
+        } catch (\Exception $e) {
+            Log::error('Failed to generate greeting audio', [
+                'agent_id' => $agent->id,
+                'voice_id' => $voiceId,
+                'greeting_text' => $processedGreeting,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            return null;
+        }
+    }
+
+    /**
+     * Prepare greeting audio for session - check cache and generate if needed
+     */
+    public function prepareGreetingAudio(Agent $agent, array $variables = []): ?array
+    {
+        $processedGreeting = $agent->getProcessedGreetingMessage($variables);
+        
+        if (empty($processedGreeting)) {
+            Log::info('No greeting message configured for agent', [
+                'agent_id' => $agent->id,
+                'agent_name' => $agent->name
+            ]);
+            return null;
+        }
+
+        // Check if greeting audio exists in cache
+        if ($this->hasGreetingAudio($agent, $variables)) {
+            $cachedAudio = $this->getGreetingAudio($agent, $variables);
+            if ($cachedAudio) {
+                Log::info('Using existing cached greeting audio', [
+                    'agent_id' => $agent->id,
+                    'voice_id' => $agent->voice_id,
+                    'greeting_preview' => substr($processedGreeting, 0, 100) . '...'
+                ]);
+                
+                return [
+                    'audio_base64' => $cachedAudio,
+                    'greeting_text' => $processedGreeting,
+                    'voice_id' => $agent->voice_id ?: 'default',
+                    'cached' => true,
+                    'ready' => true
+                ];
+            }
+        }
+
+        // Generate new greeting audio
+        Log::info('Generating new greeting audio for agent', [
+            'agent_id' => $agent->id,
+            'voice_id' => $agent->voice_id,
+            'greeting_preview' => substr($processedGreeting, 0, 100) . '...'
+        ]);
+
+        $greetingAudio = $this->generateGreetingAudio($agent, $variables);
+        
+        if ($greetingAudio) {
+            $greetingAudio['ready'] = true;
+            return $greetingAudio;
+        }
+
+        return null;
+    }
+
+    /**
+     * Handle audio playback completion notification
+     */
+    public function handleAudioPlaybackCompleted(string $sessionId, string $audioId): void
+    {
+        Log::info('Audio playback completed notification received', [
+            'session_id' => $sessionId,
+            'audio_id' => $audioId
+        ]);
+
+        $this->markAudioAsCompleted($sessionId, $audioId);
+
+        // Check if call should end after this audio
+        $sessionData = $this->getSessionData($sessionId);
+        if ($sessionData && ($sessionData['call_state']['should_end'] ?? false)) {
+            $this->endCallSession($sessionId);
+        }
+    }
+
+    /**
+     * Handle user audio interruption (when user speaks during AI response)
+     */
+    public function handleUserInterruption(string $sessionId, float $interruptionDuration = 4.0): bool
+    {
+        Log::info('User interruption detected', [
+            'session_id' => $sessionId,
+            'interruption_duration' => $interruptionDuration
+        ]);
+
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData) {
+            return false;
+        }
+
+        $interruptThreshold = $sessionData['audio_state']['interrupt_threshold'] ?? 4.0;
+
+        // Only interrupt if user spoke for at least the threshold duration
+        if ($interruptionDuration >= $interruptThreshold) {
+            return $this->handleAudioInterruption($sessionId, uniqid('interrupt_'));
+        }
+
+        return false;
+    }
+
+    /**
+     * End the call session and cleanup resources
+     */
+    public function endCallSession(string $sessionId): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if ($sessionData) {
+            $sessionData['call_state']['active'] = false;
+            $sessionData['status'] = 'ended';
+            $sessionData['ended_at'] = now()->toISOString();
+            
+            $this->updateSessionData($sessionId, $sessionData);
+            
+            // Broadcast call end event
+            broadcast(new \App\Events\VoiceCallAudioEvent(
+                $sessionId,
+                '',
+                'call_ended',
+                [
+                    'type' => 'call_ended',
+                    'message' => 'Call session has ended',
+                    'timestamp' => time(),
+                    'session_duration' => isset($sessionData['created_at']) 
+                        ? \Carbon\Carbon::parse($sessionData['created_at'])->diffInSeconds(now())
+                        : 0
+                ]
+            ));
+
+            Log::info('Call session ended', [
+                'session_id' => $sessionId,
+                'session_duration' => isset($sessionData['created_at']) 
+                    ? \Carbon\Carbon::parse($sessionData['created_at'])->diffInSeconds(now())
+                    : 0
+            ]);
+
+            // Clean up conversation history after a delay
+            dispatch(function() use ($sessionId) {
+                sleep(300); // Wait 5 minutes before cleanup
+                $this->clearConversationHistory($sessionId);
+                Redis::del("voice_call:{$sessionId}");
+            })->delay(now()->addMinutes(5));
+        }
+    }
+
+    /**
+     * Mark audio as playing
+     */
+    private function markAudioAsPlaying(string $sessionId, string $audioId): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if ($sessionData) {
+            $sessionData['audio_state']['playing'] = true;
+            $sessionData['audio_state']['current_audio_id'] = $audioId;
+            $sessionData['audio_state']['interrupted'] = false;
+            
+            $this->updateSessionData($sessionId, $sessionData);
+            
+            Log::info('Audio marked as playing', [
+                'session_id' => $sessionId,
+                'audio_id' => $audioId
+            ]);
+        }
+    }
+
+    /**
+     * Mark audio as completed
+     */
+    private function markAudioAsCompleted(string $sessionId, string $audioId): void
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if ($sessionData) {
+            $sessionData['audio_state']['playing'] = false;
+            $sessionData['audio_state']['current_audio_id'] = null;
+            $sessionData['audio_state']['interrupted'] = false;
+            
+            $this->updateSessionData($sessionId, $sessionData);
+            
+            Log::info('Audio marked as completed', [
+                'session_id' => $sessionId,
+                'audio_id' => $audioId
+            ]);
+        }
+    }
+
+    /**
+     * Handle audio interruption when user speaks during AI response
+     */
+    private function handleAudioInterruption(string $sessionId, string $newRequestId): bool
+    {
+        $sessionData = $this->getSessionData($sessionId);
+        if (!$sessionData) {
+            return false;
+        }
+        
+        // Check if audio is currently playing
+        if ($sessionData['audio_state']['playing'] ?? false) {
+            // Stop current audio playback
+            $sessionData['audio_state']['playing'] = false;
+            $sessionData['audio_state']['interrupted'] = true;
+            $sessionData['audio_state']['current_audio_id'] = null;
+            
+            // Stop any processing request
+            $sessionData['request_state']['processing'] = false;
+            $sessionData['request_state']['current_request_id'] = null;
+            
+            $this->updateSessionData($sessionId, $sessionData);
+            
+            Log::info('Audio playback interrupted by user input', [
+                'session_id' => $sessionId,
+                'new_request_id' => $newRequestId,
+                'interrupted_audio' => $sessionData['audio_state']['current_audio_id'] ?? 'unknown'
+            ]);
+            
+            // Broadcast interruption event
+            $this->broadcastInterruptionEvent($sessionId);
+            
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Broadcast audio interruption event
+     */
+    private function broadcastInterruptionEvent(string $sessionId): void
+    {
+        broadcast(new \App\Events\VoiceCallAudioEvent(
+            $sessionId,
+            '',
+            'interruption',
+            [
+                'type' => 'audio_interrupted',
+                'message' => 'AI response interrupted by user input',
+                'timestamp' => time(),
+                'action' => 'stop_audio'
+            ]
+        ));
     }
 }

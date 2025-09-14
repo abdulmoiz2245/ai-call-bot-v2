@@ -118,6 +118,8 @@
           </div>
         </div>
 
+       
+
         <!-- Test Result with enhanced styling -->
         <div v-if="testResult" class="space-y-6">
           <div class="flex items-center space-x-3">
@@ -251,6 +253,10 @@ const loadingVariables = ref(false)
 const testing = ref(false)
 const testResult = ref<any>(null)
 const previewData = ref<any>(null)
+const greetingAudio = ref<any>(null)
+const loadingGreetingAudio = ref(false)
+const greetingAudioReady = ref(false)
+const greetingAudioTimeout = ref<number | null>(null)
 
 // Computed
 const hasVariables = computed(() => variables.value.length > 0)
@@ -259,6 +265,7 @@ const hasVariables = computed(() => variables.value.length > 0)
 watch(isOpen, (newValue) => {
   if (newValue) {
     loadVariables()
+    // checkGreetingAudio()
     testResult.value = null
     previewData.value = null
   } else {
@@ -267,8 +274,23 @@ watch(isOpen, (newValue) => {
     variableValues.value = {}
     testResult.value = null
     previewData.value = null
+    greetingAudio.value = null
+    greetingAudioReady.value = false
   }
 })
+
+// Watch for variable changes to update greeting audio
+watch(variableValues, () => {
+  if (isOpen.value && hasVariables.value) {
+    // Debounce greeting audio check when variables change
+    if (greetingAudioTimeout.value) {
+      clearTimeout(greetingAudioTimeout.value)
+    }
+    greetingAudioTimeout.value = setTimeout(() => {
+      // checkGreetingAudio()
+    }, 1000) // Wait 1 second after last change
+  }
+}, { deep: true })
 
 // Methods
 function formatVariableName(variable: string): string {
@@ -343,6 +365,74 @@ async function previewVariables() {
   }
 }
 
+async function checkGreetingAudio() {
+  loadingGreetingAudio.value = true
+  try {
+    const response = await fetch(`/agents/${props.agentId}/greeting-audio/prepare`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        variables: variableValues.value
+      })
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      greetingAudioReady.value = data.has_greeting
+      if (data.has_greeting) {
+        greetingAudio.value = data.greeting_audio
+        console.log('Greeting audio ready:', data.greeting_audio.cached ? 'cached' : 'generated')
+      } else {
+        console.log('No greeting message configured for this agent')
+      }
+    } else {
+      console.error('Failed to prepare greeting audio:', data.message)
+      greetingAudioReady.value = false
+    }
+  } catch (error) {
+    console.error('Failed to check greeting audio:', error)
+    greetingAudioReady.value = false
+  } finally {
+    loadingGreetingAudio.value = false
+  }
+}
+
+async function regenerateGreetingAudio() {
+  loadingGreetingAudio.value = true
+  try {
+    const response = await fetch(`/agents/${props.agentId}/greeting-audio/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: JSON.stringify({
+        variables: variableValues.value
+      })
+    })
+    
+    const data = await response.json()
+    
+    if (data.success) {
+      greetingAudio.value = data.greeting_audio
+      greetingAudioReady.value = true
+      console.log('Greeting audio regenerated successfully')
+    } else {
+      console.error('Failed to regenerate greeting audio:', data.message)
+    }
+  } catch (error) {
+    console.error('Failed to regenerate greeting audio:', error)
+  } finally {
+    loadingGreetingAudio.value = false
+  }
+}
+
 function runTest() {
 //   if (!testMessage.value.trim()) return
 
@@ -380,6 +470,12 @@ function startCall() {
       params.append(`variables[${key}]`, value)
     }
   })
+  
+  // Add greeting audio status
+  if (greetingAudioReady.value && greetingAudio.value) {
+    params.append('has_greeting_audio', 'true')
+    params.append('greeting_ready', 'true')
+  }
   
   const fullUrl = params.toString() ? `${callUrl}?${params.toString()}` : callUrl
   

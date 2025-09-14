@@ -22,18 +22,6 @@
           </div>
         </div>
         
-        <div class="flex items-center space-x-3">
-          <div class="flex items-center space-x-2 text-white/70">
-            <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-            <span class="text-sm">Ready to Test</span>
-          </div>
-          
-          <Badge 
-            :class="agent.is_elevenlabs_connected ? 'bg-green-500/20 text-green-300 border-green-500/30' : 'bg-orange-500/20 text-orange-300 border-orange-500/30'"
-          >
-            {{ agent.is_elevenlabs_connected ? 'Laravel Reverb' : 'Custom WebSocket' }}
-          </Badge>
-        </div>
       </div>
     </div>
   
@@ -44,43 +32,6 @@
         
         <!-- Agent Configuration Panel -->
         <div class="lg:col-span-1 space-y-6">
-          
-          <!-- Agent Info Card -->
-          <div class="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6">
-            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-              <div class="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-500 rounded-lg flex items-center justify-center mr-3">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
-                </svg>
-              </div>
-              Agent Details
-            </h3>
-            
-            <div class="space-y-3">
-              <div>
-                <Label class="text-blue-200 text-sm">Description</Label>
-                <p class="text-white/90 text-sm mt-1">{{ agent.description || 'No description provided' }}</p>
-              </div>
-              
-              <div>
-                <Label class="text-blue-200 text-sm">Voice ID</Label>
-                <p class="text-white/90 text-sm mt-1 font-mono bg-white/10 px-2 py-1 rounded">{{ agent.voice_id }}</p>
-              </div>
-              
-              <div v-if="hasVariables">
-                <Label class="text-blue-200 text-sm">Active Variables</Label>
-                <div class="flex flex-wrap gap-2 mt-2">
-                  <Badge 
-                    v-for="(value, key) in variables" 
-                    :key="key"
-                    class="bg-blue-500/20 text-blue-300 border-blue-500/30 text-xs"
-                  >
-                    {{ key }}: {{ value }}
-                  </Badge>
-                </div>
-              </div>
-            </div>
-          </div>
 
           <!-- System Prompt Preview -->
           <div class="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6">
@@ -95,22 +46,6 @@
             
             <div class="bg-black/30 rounded-lg p-4 max-h-48 overflow-y-auto">
               <pre class="text-blue-100 text-sm whitespace-pre-wrap">{{ agent.system_prompt || 'No system prompt configured' }}</pre>
-            </div>
-          </div>
-
-          <!-- Greeting Message Preview -->
-          <div class="bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl p-6">
-            <h3 class="text-lg font-semibold text-white mb-4 flex items-center">
-              <div class="w-8 h-8 bg-gradient-to-r from-purple-500 to-pink-500 rounded-lg flex items-center justify-center mr-3">
-                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path>
-                </svg>
-              </div>
-              Greeting Message
-            </h3>
-            
-            <div class="bg-black/30 rounded-lg p-4">
-              <p class="text-blue-100 text-sm">{{ agent.greeting_message || 'No greeting message configured' }}</p>
             </div>
           </div>
 
@@ -225,9 +160,9 @@
                 <h4 class="text-white font-semibold mb-2">Connection Details</h4>
                 <div class="space-y-1 text-sm text-blue-200">
                   <div v-if="connectionInfo.platform">Platform: {{ connectionInfo.platform }}</div>
-                  <div v-if="connectionInfo.latency">Latency: {{ connectionInfo.latency }}ms</div>
+                  <div v-if="connectionInfo.room">Room: {{ connectionInfo.room }}</div>
                   <div v-if="connectionInfo.quality">Quality: {{ connectionInfo.quality }}</div>
-                  <div v-if="connectionInfo.conversation_id">Session: {{ connectionInfo.conversation_id }}</div>
+                  <div v-if="connectionInfo.participants">Participants: {{ connectionInfo.participants }}</div>
                 </div>
               </div>
 
@@ -257,6 +192,10 @@
 </template>
 
 <script setup lang="ts">
+/* =================================================================
+ * COMMENTED OUT ORIGINAL WEBSOCKET CODE - REPLACED WITH LIVEKIT
+ * =================================================================
+ 
 import { ref, computed, onUnmounted } from 'vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -266,6 +205,35 @@ import { router } from '@inertiajs/vue3'
 import echo from '@/echo'
 import { MicVAD } from "@ricky0123/vad-web"
 
+// ... All the original WebSocket/VAD/audio processing code has been commented out ...
+
+*/
+
+// ===============================================
+// NEW LIVEKIT INTEGRATION
+// ===============================================
+
+import { ref, computed, onUnmounted } from 'vue'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
+import { ArrowLeft } from 'lucide-vue-next'
+import { router } from '@inertiajs/vue3'
+import { 
+  Room, 
+  RoomEvent, 
+  TrackPublication,
+  RemoteTrackPublication,
+  RemoteAudioTrack,
+  RemoteTrack,
+  RemoteParticipant,
+  Track,
+  ConnectionState,
+  DataPacket_Kind,
+  Participant,
+  DisconnectReason,
+  createLocalAudioTrack
+} from 'livekit-client'
 
 interface Props {
   agent: {
@@ -273,6 +241,7 @@ interface Props {
     name: string
     description: string
     voice_id: string
+    language?: string
     company_name: string
     system_prompt: string
     greeting_message: string
@@ -281,26 +250,28 @@ interface Props {
     variables: Record<string, string>
   }
   variables: Record<string, string>
+  greeting_audio?: {
+    audio_base64: string
+    greeting_text: string
+    voice_id: string
+    cached: boolean
+    ready: boolean
+  } | null
+  greeting_ready: boolean
 }
 
 const props = defineProps<Props>()
 
-// State
+// LiveKit state
+const room = ref<Room | null>(null)
 const callStatus = ref<'idle' | 'connecting' | 'connected' | 'ended'>('idle')
 const callDuration = ref(0)
 const connectionInfo = ref<any>(null)
 const callInterval = ref<number | null>(null)
-const mediaRecorder = ref<MediaRecorder | null>(null)
-const audioStream = ref<MediaStream | null>(null)
-const sessionId = ref<string | null>(null)
-const channelName = ref<string | null>(null)
+const currentTranscript = ref<string>('')
+const agentMessages = ref<string[]>([])
 
-// WebSocket channels
-let regularChannel: any = null
-let privateAudioChannel: any = null
-let vadInstance: any = null
-
-// Computed
+// Computed properties
 const hasVariables = computed(() => Object.keys(props.variables).length > 0)
 
 const canStartCall = computed(() => {
@@ -319,10 +290,10 @@ const statusTitle = computed(() => {
 
 const statusDescription = computed(() => {
   switch (callStatus.value) {
-    case 'idle': return 'Click Start Call to begin testing via WebSocket audio streaming'
-    case 'connecting': return 'Establishing WebSocket connection...'
-    case 'connected': return 'Connected via WebSocket - Speak to test your agent'
-    case 'ended': return 'WebSocket connection closed'
+    case 'idle': return 'Click Start Call'
+    case 'connecting': return 'Establishing connection...'
+    case 'connected': return 'Connected - Speak to test your agent'
+    case 'ended': return 'Connection closed'
     default: return ''
   }
 })
@@ -332,196 +303,13 @@ function goBack() {
   router.visit('/agents')
 }
 
-// TEMPORARY: Send audio via API endpoint
-async function sendAudioViaAPI(base64Audio: string, options: any = {}) {
-  if (!sessionId.value) {
-    console.error('No session ID available for API call')
-    return
-  }
-
+async function startCall() {
   try {
-    const response = await fetch('/voice-call/audio-chunk', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({
-        session_id: sessionId.value,
-        audio_data: base64Audio,
-        user_id: props.agent.id,
-        timestamp: Date.now(),
-        audio_format: options.audio_format || 'wav',
-        sample_rate: options.sample_rate || 16000
-      })
-    })
-
-    const result = await response.json()
+    callStatus.value = 'connecting'
+    console.log('Starting LiveKit test call...')
     
-    if (result.success) {
-      console.log('Audio sent via API successfully:', result.message)
-      
-      // If we get an AI response, play it
-      if (result.ai_response && result.ai_response.audio_base64) {
-        playAudioFromBase64(result.ai_response.audio_base64)
-        console.log('AI Response:', result.ai_response.transcript || 'No transcript available')
-      }
-    } else {
-      console.error('API audio submission failed:', result.message)
-    }
-  } catch (error) {
-    console.error('Failed to send audio via API:', error)
-  }
-}
-
-// NEW: Send audio file directly as binary upload (background processing)
-async function sendAudioFileViaAPI(audioBlob: Blob) {
-  if (!sessionId.value) {
-    console.error('No session ID available for API call')
-    return
-  }
-
-  try {
-    const formData = new FormData()
-    formData.append('audio_file', audioBlob, 'speech.wav')
-    formData.append('session_id', sessionId.value)
-    formData.append('user_id', props.agent.id.toString())
-    formData.append('timestamp', Date.now().toString())
-    formData.append('audio_format', 'wav')
-    formData.append('sample_rate', '16000')
-
-    const response = await fetch('/voice-call/audio-file', {
-      method: 'POST',
-      headers: {
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: formData
-    })
-
-    const result = await response.json()
-    
-    if (result.success) {
-      console.log('Audio file uploaded and queued for processing:', result.message)
-      console.log('Processing status:', result.processing_status)
-      
-      // Show processing indicator
-      if (result.processing_status === 'queued') {
-        console.log('Audio is being processed in the background. Waiting for AI response via WebSocket...')
-        // You could show a spinner or "processing..." message here
-      }
-      
-      // Note: AI response will come via WebSocket broadcast, not in this response
-      // The audio event listener will handle playing the response audio
-    } else {
-      console.error('API audio file submission failed:', result.message)
-    }
-  } catch (error) {
-    console.error('Failed to send audio file via API:', error)
-  }
-}
-
-// Helper function to create proper WAV file from Float32Array
-function createWAVFile(audioData: Float32Array, sampleRate: number): ArrayBuffer {
-  const numChannels = 1 // Mono
-  const bitsPerSample = 16
-  const bytesPerSample = bitsPerSample / 8
-  const blockAlign = numChannels * bytesPerSample
-  const byteRate = sampleRate * blockAlign
-  const dataLength = audioData.length * bytesPerSample
-  const bufferLength = 44 + dataLength // WAV header is 44 bytes
-  
-  const buffer = new ArrayBuffer(bufferLength)
-  const view = new DataView(buffer)
-  
-  // WAV header
-  const writeString = (offset: number, string: string) => {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i))
-    }
-  }
-  
-  writeString(0, 'RIFF')                                    // ChunkID
-  view.setUint32(4, bufferLength - 8, true)                // ChunkSize
-  writeString(8, 'WAVE')                                    // Format
-  writeString(12, 'fmt ')                                   // Subchunk1ID
-  view.setUint32(16, 16, true)                              // Subchunk1Size
-  view.setUint16(20, 1, true)                               // AudioFormat (PCM)
-  view.setUint16(22, numChannels, true)                     // NumChannels
-  view.setUint32(24, sampleRate, true)                      // SampleRate
-  view.setUint32(28, byteRate, true)                        // ByteRate
-  view.setUint16(32, blockAlign, true)                      // BlockAlign
-  view.setUint16(34, bitsPerSample, true)                   // BitsPerSample
-  writeString(36, 'data')                                   // Subchunk2ID
-  view.setUint32(40, dataLength, true)                      // Subchunk2Size
-  
-  // Convert Float32Array to 16-bit PCM
-  let offset = 44
-  for (let i = 0; i < audioData.length; i++) {
-    // Convert float (-1 to 1) to 16-bit integer (-32768 to 32767)
-    const sample = Math.max(-1, Math.min(1, audioData[i]))
-    const intSample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
-    view.setInt16(offset, intSample, true)
-    offset += 2
-  }
-  
-  return buffer
-}
-
-// Helper function to convert ArrayBuffer to base64
-function arrayBufferToBase64(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  return btoa(binary)
-}
-
-function startCall() {
-  callStatus.value = 'connecting'
-  
-  // Request microphone access first
-  initializeAudio().then(() => {
-    startWebSocketCall()
-  }).catch((error) => {
-    console.error('Failed to initialize audio:', error)
-    callStatus.value = 'idle'
-    alert('Microphone access is required for voice calls. Please allow microphone access and try again.')
-  })
-}
-
-async function initializeAudio() {
-  try {
-    // Request microphone access
-    audioStream.value = await navigator.mediaDevices.getUserMedia({ 
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        sampleRate: 16000
-      } 
-    })
-    
-    // Set up MediaRecorder for audio streaming
-    mediaRecorder.value = new MediaRecorder(audioStream.value, {
-      mimeType: 'audio/webm;codecs=opus'
-    })
-    
-    return true
-  } catch (error) {
-    console.error('Failed to get microphone access:', error)
-    throw error
-  }
-}
-
-async function startWebSocketCall() {
-  try {
-    console.log('Starting WebSocket call initialization...')
-    
-    // Initialize voice call session via Laravel API
-    const response = await fetch(`/agents/${props.agent.id}/voice-call/initialize`, {
+    // Start LiveKit test call via Laravel backend
+    const response = await fetch(`/agents/${props.agent.id}/livekit/test-call`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -534,313 +322,236 @@ async function startWebSocketCall() {
     })
     
     const data = await response.json()
-    console.log('Initialize response:', data)
+    console.log('LiveKit test response:', data)
     
     if (!data.success) {
-      throw new Error(data.message || 'Failed to initialize voice call session')
+      throw new Error(data.message || 'Failed to start LiveKit test call')
     }
     
-    sessionId.value = data.session_id
-    channelName.value = data.channel_name
-    
-    console.log('Session initialized:', {
-      session_id: sessionId.value,
-      channel_name: channelName.value
-    })
-    
-    // Subscribe to regular channel for status updates
-    if (channelName.value) {
-      regularChannel = echo.private(channelName.value)
-      console.log('Subscribed to regular channel:', channelName.value)
-    }
-    
-    // Subscribe to private audio channel for audio streaming
-    if (sessionId.value) {
-      const audioChannelName = `voice-call-audio.${sessionId.value}`
-      privateAudioChannel = echo.private(audioChannelName)
-      console.log('Subscribed to private audio channel:', audioChannelName)
-    }
-    
-    // Listen for status updates on regular channel
-    if (regularChannel) {
-      regularChannel.listen('.voice.call.status', (event: any) => {
-        console.log('Call status updated:', event)
-        if (event.status === 'connected') {
-          callStatus.value = 'connected'
-          startCallTimer()
-          connectionInfo.value = {
-            platform: 'WebSocket Audio',
-            latency: Math.floor(Math.random() * 30) + 10,
-            quality: 'HD',
-            session_id: sessionId.value
-          }
-          
-          // Start streaming audio via WebSocket
-          startWebSocketAudioStreaming()
-        } else if (event.status === 'ended') {
-          callStatus.value = 'ended'
-          stopCallTimer()
-          stopWebSocketAudioStreaming()
-        }
-      })
-    }
-    
-    // Listen for audio responses on private audio channel
-    if (privateAudioChannel) {
-      privateAudioChannel.listen('.voice.call.audio', (event: any) => {
-        console.log('Audio event received:', event.direction, event.timestamp, event.metadata)
-        
-        if (event.direction === 'outgoing') {
-          // Handle AI response audio
-          if (event.metadata?.audio_url) {
-            // Play audio from URL (new method for large files)
-            console.log('Received audio_url:', event.metadata.audio_url)
-            playAudioFromUrl(event.metadata.audio_url)
-          } else if (event.audio_data) {
-            // Fallback: Play audio from base64 (for smaller files)
-            playAudioFromBase64(event.audio_data)
-            console.log('Playing AI response from base64')
-          } else {
-            console.warn('No audio data or URL received in outgoing event')
-          }
-          
-          if (event.metadata?.transcript) {
-            console.log('AI response:', event.metadata.transcript)
-          }
-          
-          if (event.metadata?.user_transcript) {
-            console.log('User said:', event.metadata.user_transcript)
-          }
-          
-          if (event.metadata?.processing_time) {
-            console.log('Processing time:', event.metadata.processing_time + 's')
-          }
-        } else if (event.direction === 'error') {
-          // Handle processing errors
-          console.error('Audio processing error:', event.metadata?.message || 'Unknown error')
-          
-          if (event.metadata?.type === 'processing_error') {
-            console.error('Background processing failed:', event.metadata.message)
-            // You could show an error message to the user here
-          } else if (event.metadata?.type === 'processing_failed') {
-            console.error('Background processing failed permanently:', event.metadata.message)
-            // You could show a permanent error message to the user here
-          }
-        }
-      })
-    }
-    
-    // Trigger connected status
-    console.log('Triggering connected status...')
-    const triggerResponse = await fetch('/voice-call/trigger-connected', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-        'X-Requested-With': 'XMLHttpRequest'
-      },
-      body: JSON.stringify({
-        session_id: sessionId.value
-      })
-    })
-    
-    const triggerData = await triggerResponse.json()
-    console.log('Trigger response:', triggerData)
+    // Connect to LiveKit room using the correct data structure
+    await connectToRoom(
+      data.session_data.room_name, 
+      data.session_data.tokens.caller, 
+      data.session_data.url
+    )
     
   } catch (error) {
-    console.error('Failed to start WebSocket call:', error)
+    console.error('Failed to start LiveKit call:', error)
     callStatus.value = 'idle'
-    connectionInfo.value = null
+    alert('Failed to start call: ' + (error as Error).message)
   }
 }
 
-async function startWebSocketAudioStreaming() {
-  if (!mediaRecorder.value || !sessionId.value) {
-    console.error('MediaRecorder or session not initialized')
-    return
-  }
-
+async function connectToRoom(roomName: string, token: string, wsUrl: string) {
   try {
-    // Initialize VAD with proper configuration
-    const myvad = await MicVAD.new({
-      positiveSpeechThreshold: 0.65,
-      negativeSpeechThreshold: 0.45,
-      preSpeechPadFrames: 3,
-      redemptionFrames: 35,
-      frameSamples: 512,
-      minSpeechFrames: 12,
-      submitUserSpeechOnPause: false,
-      baseAssetPath: "https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.20/dist/",
-      onnxWASMBasePath: "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/",
-      model: "v5",
-      onSpeechStart: () => {
-        console.log('Speech started')
-      },
-      onSpeechEnd: (audio) => {
-        console.log('Speech ended, processing audio chunk...', audio.length)
-        
-        // Convert Float32Array to proper WAV format
-        const wavBuffer = createWAVFile(audio, 16000) // 16kHz sample rate
-        
-        // Create a Blob from the audio buffer for direct file upload
-        const audioBlob = new Blob([wavBuffer], { type: 'audio/wav' })
-        
-        // TEMPORARY: Send via API as actual file instead of base64
-        sendAudioFileViaAPI(audioBlob)
-        
-        // TODO: Re-enable WebSocket when whisper events are fixed
-        // Send audio data via whisper event on regular channel
-        // if (regularChannel) {
-        //   regularChannel.whisper('client-audio-data', {
-        //     session_id: sessionId.value,
-        //     audio_data: base64Audio,
-        //     user_id: props.agent.id,
-        //     timestamp: Date.now(),
-        //     audio_format: 'wav',
-        //     sample_rate: 16000
-        //   })
-        //   console.log('Audio chunk sent via whisper event')
-        // } else {
-        //   console.warn('Regular channel not available')
-        // }
-      },
-      onVADMisfire: () => {
-        console.log('VAD misfire detected')
-      }
+    // Request microphone permission first
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Close the stream as we just needed permission
+      stream.getTracks().forEach(track => track.stop())
+      console.log('Microphone permission granted')
+    } catch (permError) {
+      console.error('Microphone permission denied:', permError)
+      throw new Error('Microphone permission is required for voice calls')
+    }
+
+    // Create room instance with simplified options
+    room.value = new Room({
+      adaptiveStream: true,
+      dynacast: true,
     })
     
-    await myvad.start()
-    vadInstance = myvad
-    console.log('VAD started successfully')
-  } catch (error) {
-    console.error('Failed to initialize VAD:', error)
-    console.log('Falling back to continuous recording...')
+    // Set up room event listeners
+    setupRoomEventListeners()
     
-    // Fallback to the commented MediaRecorder approach
-    startFallbackRecording()
-  }
+    // Connect to room
+    console.log('Connecting to LiveKit room:', roomName)
+    await room.value.connect(wsUrl, token)
+    
+    console.log('Connected to LiveKit room successfully')
+    
+    // Try to enable microphone with a delay to avoid race conditions
+    setTimeout(async () => {
+      try {
+        // Use a simpler approach to create and publish audio tracks
+        const audioTrack = await createLocalAudioTrack({
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        })
+        
+        await room.value?.localParticipant.publishTrack(audioTrack)
+        console.log('Microphone track created and published successfully')
+        
+        // Set microphone enabled
+        await room.value?.localParticipant.setMicrophoneEnabled(true)
+        console.log('Microphone enabled successfully')
 
-  console.log('WebSocket audio streaming started')
+        await room.value?.localParticipant.setMetadata(JSON.stringify({
+          status: "busy",
+          name: "Agent Moiz"
+        }));
+
+        
+      } catch (micError) {
+        console.warn('Failed to enable microphone:', micError)
+        
+        // Fallback: try just setting microphone enabled without custom options
+        try {
+          await room.value?.localParticipant.setMicrophoneEnabled(true)
+          console.log('Microphone enabled with fallback method')
+        } catch (fallbackError) {
+          console.error('Fallback microphone enable also failed:', fallbackError)
+        }
+      }
+    }, 500)
+    
+    callStatus.value = 'connected'
+    startCallTimer()
+    
+    connectionInfo.value = {
+      platform: 'LiveKit',
+      room: roomName,
+      quality: 'HD',
+      participants: room.value.numParticipants
+    }
+    
+  } catch (error) {
+    console.error('Failed to connect to LiveKit room:', error)
+    callStatus.value = 'idle'
+    throw error
+  }
 }
 
-function startFallbackRecording() {
-  if (!mediaRecorder.value) return
+function setupRoomEventListeners() {
+  if (!room.value) return
   
-  mediaRecorder.value.ondataavailable = async (event) => {
-    if (event.data.size > 0) {
-      try {
-        const reader = new FileReader()
-        reader.onload = async () => {
-          const base64Audio = (reader.result as string).split(',')[1]
-          
-          // TEMPORARY: Send via API instead of WebSocket whisper event
-          await sendAudioViaAPI(base64Audio)
-          
-          // TODO: Re-enable WebSocket when whisper events are fixed
-          // if (regularChannel) {
-          //   regularChannel.whisper('client-audio-data', {
-          //     session_id: sessionId.value,
-          //     audio_data: base64Audio,
-          //     user_id: props.agent.id,
-          //     timestamp: Date.now()
-          //   })
-          // }
-        }
-        reader.readAsDataURL(event.data)
-      } catch (error) {
-        console.error('Failed to process audio data:', error)
+  // Connection state changes
+  room.value.on(RoomEvent.ConnectionStateChanged, (state: ConnectionState) => {
+    console.log('LiveKit connection state:', state)
+    
+    if (state === ConnectionState.Connected) {
+      console.log('LiveKit room connected')
+    } else if (state === ConnectionState.Disconnected) {
+      console.log('LiveKit room disconnected')
+      if (callStatus.value === 'connected') {
+        callStatus.value = 'ended'
+        stopCallTimer()
       }
     }
-  }
-
-  mediaRecorder.value.start(1000) // Send audio chunks every 1 second
-}
-
-function stopWebSocketAudioStreaming() {
-  // Stop VAD if it's running
-  if (vadInstance) {
-    try {
-      vadInstance.pause()
-      vadInstance = null
-      console.log('VAD stopped')
-    } catch (error) {
-      console.error('Error stopping VAD:', error)
+  })
+  
+  // Participant events
+  room.value.on(RoomEvent.ParticipantConnected, (participant: Participant) => {
+    console.log('Participant connected:', participant.identity)
+    console.log("Metadata:", participant.metadata)
+    // Update connection info
+    if (connectionInfo.value) {
+      connectionInfo.value.participants = room.value!.numParticipants
     }
-  }
+  })
   
-  if (mediaRecorder.value && mediaRecorder.value.state !== 'inactive') {
-    mediaRecorder.value.stop()
-  }
+  room.value.on(RoomEvent.ParticipantDisconnected, (participant: Participant) => {
+    console.log('Participant disconnected:', participant.identity)
+    
+    // Update connection info
+    if (connectionInfo.value) {
+      connectionInfo.value.participants = room.value!.numParticipants
+    }
+  })
   
-  if (audioStream.value) {
-    audioStream.value.getTracks().forEach(track => track.stop())
-    audioStream.value = null
-  }
+  // Track events
+  room.value.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    console.log('Track subscribed:', {
+      kind: track.kind,
+      participant: participant.identity,
+      source: track.source
+    })
+    
+    // Handle audio tracks (agent speech)
+    if (track.kind === Track.Kind.Audio && track instanceof RemoteAudioTrack) {
+      const audioElement = track.attach()
+      audioElement.play()
+      console.log('Playing agent audio track')
+    }
+  })
   
-  console.log('WebSocket audio streaming stopped')
-}
-
-function cancelCall() {
-  callStatus.value = 'idle'
-  stopCallTimer()
-  stopWebSocketAudioStreaming()
-  connectionInfo.value = null
+  room.value.on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, publication: RemoteTrackPublication, participant: RemoteParticipant) => {
+    console.log('Track unsubscribed:', {
+      kind: track.kind,
+      participant: participant.identity
+    })
+  })
   
-  // Disconnect from channels
-  if (regularChannel && channelName.value) {
-    echo.leave(channelName.value)
-    regularChannel = null
-  }
-  if (privateAudioChannel && sessionId.value) {
-    echo.leave(`voice-call-audio.${sessionId.value}`)
-    privateAudioChannel = null
-  }
+  // Data events (for transcripts and metadata)
+  room.value.on(RoomEvent.DataReceived, (payload: Uint8Array, participant?: Participant, kind?: DataPacket_Kind) => {
+    try {
+      const data = JSON.parse(new TextDecoder().decode(payload))
+      console.log('Data received:', data)
+      
+      if (data.type === 'transcript') {
+        currentTranscript.value = data.text || ''
+        console.log('User transcript:', data.text)
+      } else if (data.type === 'agent_response') {
+        agentMessages.value.push(data.text || '')
+        console.log('Agent response:', data.text)
+      } else if (data.type === 'greeting') {
+        console.log('Agent greeting:', data.text)
+        agentMessages.value.push(`Greeting: ${data.text}`)
+      }
+    } catch (error) {
+      console.error('Failed to parse data message:', error)
+    }
+  })
+  
+  // Error handling
+  room.value.on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
+    console.log('Room disconnected:', reason)
+    if (callStatus.value === 'connected') {
+      callStatus.value = 'ended'
+      stopCallTimer()
+    }
+  })
+  
+  room.value.on(RoomEvent.Reconnecting, () => {
+    console.log('Room reconnecting...')
+  })
+  
+  room.value.on(RoomEvent.Reconnected, () => {
+    console.log('Room reconnected')
+  })
 }
 
 async function endCall() {
-  callStatus.value = 'ended'
-  stopCallTimer()
-  stopWebSocketAudioStreaming()
-  
-  // Send end call signal to backend
-  if (sessionId.value) {
-    try {
-      await fetch('/voice-call/end-session', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
-          'X-Requested-With': 'XMLHttpRequest'
-        },
-        body: JSON.stringify({
-          session_id: sessionId.value,
-          reason: 'user_ended',
-          save_audio: true // Enable audio saving for multi-user access
-        })
-      })
-    } catch (error) {
-      console.error('Failed to end call properly:', error)
+  try {
+    callStatus.value = 'ended'
+    stopCallTimer()
+    
+    if (room.value) {
+      console.log('Disconnecting from LiveKit room...')
+      await room.value.disconnect()
+      room.value = null
     }
-  }
-  
-  // Disconnect from channels
-  if (regularChannel && channelName.value) {
-    echo.leave(channelName.value)
-    regularChannel = null
-  }
-  if (privateAudioChannel && sessionId.value) {
-    echo.leave(`voice-call-audio.${sessionId.value}`)
-    privateAudioChannel = null
-  }
-  
-  // Reset after 3 seconds
-  setTimeout(() => {
+    
+    // Reset state after delay
+    setTimeout(() => {
+      callStatus.value = 'idle'
+      callDuration.value = 0
+      connectionInfo.value = null
+      currentTranscript.value = ''
+      agentMessages.value = []
+    }, 3000)
+    
+  } catch (error) {
+    console.error('Error ending call:', error)
+    // Reset state anyway
     callStatus.value = 'idle'
-    callDuration.value = 0
-    connectionInfo.value = null
-    sessionId.value = null
-    channelName.value = null
-  }, 3000)
+    room.value = null
+  }
+}
+
+function cancelCall() {
+  endCall()
 }
 
 function startCallTimer() {
@@ -862,90 +573,39 @@ function formatDuration(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
-function playAudioFromBase64(base64Audio: string) {
-  try {
-    // Create audio element and play base64 audio
-    const audioBlob = new Blob([Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0))], {
-      type: 'audio/mpeg'
-    })
-    const audioUrl = URL.createObjectURL(audioBlob)
-    const audio = new Audio(audioUrl)
-    audio.play()
-      .then(() => {
-        console.log('AI response audio played successfully')
-      })
-      .catch((error) => {
-        console.error('Failed to play AI response audio:', error)
-      })
-  } catch (error) {
-    console.error('Failed to create audio from base64:', error)
+// Helper function to get language display name
+function getLanguageName(languageCode: string): string {
+  const languageNames: Record<string, string> = {
+    'en': 'English',
+    'es': 'Spanish',
+    'fr': 'French', 
+    'de': 'German',
+    'it': 'Italian',
+    'pt': 'Portuguese',
+    'pl': 'Polish',
+    'hi': 'Hindi',
+    'ar': 'Arabic',
+    'zh': 'Chinese',
+    'ja': 'Japanese',
+    'ko': 'Korean',
+    'ru': 'Russian',
+    'tr': 'Turkish',
+    'nl': 'Dutch',
+    'sv': 'Swedish',
+    'da': 'Danish',
+    'no': 'Norwegian',
+    'fi': 'Finnish'
   }
-}
-
-function playAudioFromUrl(audioUrl: string) {
-  try {
-    console.log('Attempting to play audio from URL:', audioUrl)
-    
-    // Create audio element and play from URL
-    const audio = new Audio(audioUrl)
-    
-    // Add error handling for debugging
-    audio.addEventListener('error', (e) => {
-      console.error('Audio error details:', {
-        error: e,
-        audioUrl: audioUrl,
-        networkState: audio.networkState,
-        readyState: audio.readyState
-      })
-      
-      // Fallback: try fetching the audio and creating blob URL
-      console.log('Trying blob URL fallback...')
-      fetch(audioUrl)
-        .then(response => {
-          if (!response.ok) {
-            throw new Error(`HTTP ${response.status}: ${response.statusText}`)
-          }
-          return response.blob()
-        })
-        .then(blob => {
-          const blobUrl = URL.createObjectURL(blob)
-          const fallbackAudio = new Audio(blobUrl)
-          return fallbackAudio.play()
-        })
-        .then(() => {
-          console.log('Fallback audio played successfully')
-        })
-        .catch(fallbackError => {
-          console.error('Fallback audio also failed:', fallbackError)
-        })
-    })
-    
-    audio.addEventListener('loadeddata', () => {
-      console.log('Audio loaded successfully, duration:', audio.duration)
-    })
-    
-    audio.play()
-      .then(() => {
-        console.log('AI response audio played successfully from URL:', audioUrl)
-      })
-      .catch((error) => {
-        console.error('Failed to play AI response audio from URL:', error)
-      })
-  } catch (error) {
-    console.error('Failed to create audio from URL:', error)
-  }
+  
+  return languageNames[languageCode?.toLowerCase()] || languageCode?.toUpperCase() || 'Unknown'
 }
 
 // Cleanup
 onUnmounted(() => {
   stopCallTimer()
-  stopWebSocketAudioStreaming()
-  
-  if (regularChannel && channelName.value) {
-    echo.leave(channelName.value)
-  }
-  if (privateAudioChannel && sessionId.value) {
-    echo.leave(`voice-call-audio.${sessionId.value}`)
+  if (room.value) {
+    room.value.disconnect()
+    room.value = null
   }
 })
 </script>

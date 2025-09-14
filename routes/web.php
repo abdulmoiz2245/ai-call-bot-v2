@@ -10,6 +10,7 @@ use App\Http\Controllers\OrderController;
 use App\Http\Controllers\ImportController;
 use App\Http\Controllers\VoiceCallController;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Storage;
 use Inertia\Inertia;
 
 Route::get('/', function () {
@@ -53,6 +54,11 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::post('agents/{agent}/voice-connection', [AgentController::class, 'getVoiceWebSocket'])->name('agents.voice-connection');
     Route::post('agents/{agent}/clone', [AgentController::class, 'clone'])->name('agents.clone');
     
+
+    // Call Management Routes
+    
+    Route::get('voice-call/{sessionId}/status', [AgentController::class, 'getCallStatus'])->name('voice-call.status');
+    
     // ElevenLabs Integration (Super Admin only)
     Route::get('agents/elevenlabs/list', [AgentController::class, 'getElevenLabsAgents'])->name('agents.elevenlabs.list');
     Route::post('agents/{agent}/elevenlabs/connect', [AgentController::class, 'connectToElevenLabs'])->name('agents.elevenlabs.connect');
@@ -64,6 +70,10 @@ Route::middleware(['auth', 'verified', 'tenant.scope'])->group(function () {
     Route::post('voice-call/audio-chunk', [VoiceCallController::class, 'handleAudioChunk'])->name('voice-call.audio-chunk');
     Route::post('voice-call/audio-file', [VoiceCallController::class, 'handleAudioFile'])->name('voice-call.audio-file');
     Route::get('voice-call/{sessionId}/status', [VoiceCallController::class, 'getSessionStatus'])->name('voice-call.status');
+    
+    // LiveKit Voice Calls
+    Route::post('agents/{agent}/livekit/test-call', [AgentController::class, 'startLiveKitTest'])->name('agents.livekit.test-call');
+    Route::post('livekit/token', [AgentController::class, 'getLiveKitToken'])->name('livekit.token');
     
     // Calls
     Route::resource('calls', CallController::class)->only(['index', 'show']);
@@ -96,9 +106,6 @@ Route::get('audio-response/{sessionId}/{filename}', function ($sessionId, $filen
     ]);
 })->name('audio-response');
 
-// Webhook routes (no auth required)
-Route::post('webhooks/calls', [CallController::class, 'webhook'])->name('webhooks.calls');
-Route::post('webhooks/voice-call/metadata', [VoiceCallController::class, 'handleConversationMetadata'])->name('webhooks.voice-call.metadata');
 
 // Test routes
 require __DIR__.'/test.php';
@@ -109,6 +116,25 @@ Route::prefix('api/twiml')->name('twiml.')->group(function () {
     Route::post('flow', [\App\Http\Controllers\TwiMLController::class, 'flow'])->name('flow');
     Route::post('status', [\App\Http\Controllers\TwiMLController::class, 'status'])->name('status');
     Route::post('recording', [\App\Http\Controllers\TwiMLController::class, 'recording'])->name('recording');
+});
+
+
+
+Route::get('/recording/{filename}', function ($filename) {
+    //S3 disk should be configured in config/filesystems.php
+    $disk = Storage::disk('s3');
+
+    // recordings are saved under "livekit/..."
+    $path = "livekit/{$filename}";
+
+    if (!$disk->exists($path)) {
+        abort(404, "Recording not found");
+    }
+
+    // Signed URL valid for 1 hour
+    $url = $disk->temporaryUrl($path, now()->addHour());
+
+    return response()->json(['url' => $url]);
 });
 
 require __DIR__.'/settings.php';

@@ -7,6 +7,7 @@ use App\Models\Campaign;
 use App\Services\CallingService;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
+use Log;
 
 class CallController extends Controller
 {
@@ -96,30 +97,12 @@ class CallController extends Controller
      */
     public function webhook(Request $request)
     {
-        $callId = $request->input('call_id');
-        $status = $request->input('status');
-        $duration = $request->input('duration');
-        $cost = $request->input('cost');
-        $recording_url = $request->input('recording_url');
+        $data = $request->all();
 
-        $call = Call::where('external_id', $callId)->first();
-        
-        if (!$call) {
-            return response()->json(['error' => 'Call not found'], 404);
-        }
+        // Just log for now
+        Log::info('Livekit Webhook Received:', $data);
 
-        $call->update([
-            'status' => $status,
-            'duration' => $duration,
-            'cost' => $cost,
-            'recording_url' => $recording_url,
-            'ended_at' => now(),
-        ]);
-
-        // Handle post-call processing
-        $this->callingService->handleCallCompletion($call);
-
-        return response()->json(['success' => true]);
+        return response()->json(['status' => 'ok']);
     }
 
     /**

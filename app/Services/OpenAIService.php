@@ -20,7 +20,7 @@ class OpenAIService
     /**
      * Transcribe audio using OpenAI Whisper
      */
-    public function transcribeAudio(string $audioData, string $mimeType = 'audio/wav'): ?string
+    public function transcribeAudio(string $audioData, string $mimeType = 'audio/wav', ?string $language = null): ?string
     {
         try {
             // Decode base64 audio data
@@ -30,14 +30,28 @@ class OpenAIService
             $tempFile = tempnam(sys_get_temp_dir(), 'whisper_transcribe_');
             file_put_contents($tempFile, $audioContent);
 
+            // Prepare request payload
+            $requestData = [
+                'model' => 'whisper-1',
+                'response_format' => 'json'
+            ];
+
+            // Add language parameter if provided (Whisper supports ISO 639-1 language codes)
+            if ($language) {
+                $langCode = strtolower(substr($language, 0, 2));
+                $requestData['language'] = $langCode;
+                
+                Log::info('OpenAI Whisper: Adding language parameter', [
+                    'original_language' => $language,
+                    'language_code' => $langCode
+                ]);
+            }
+
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->apiKey,
             ])->attach(
                 'file', file_get_contents($tempFile), 'audio.wav'
-            )->post("{$this->baseUrl}/audio/transcriptions", [
-                'model' => 'whisper-1',
-                'response_format' => 'json'
-            ]);
+            )->post("{$this->baseUrl}/audio/transcriptions", $requestData);
 
             // Clean up temp file
             unlink($tempFile);
@@ -56,9 +70,9 @@ class OpenAIService
     }
 
     /**
-     * Generate AI response using OpenAI ChatGPT
+     * Generate AI response using OpenAI ChatGPT with call end detection
      */
-    public function generateResponse(string $userMessage, Agent $agent, array $conversationHistory = [], ?string $processedSystemPrompt = null): ?array
+    public function generateResponse(string $userMessage, Agent $agent, array $conversationHistory = [], ?string $processedSystemPrompt = null, ?string $language = null): ?array
     {
         try {
             // Build conversation context
@@ -67,14 +81,26 @@ class OpenAIService
             // Add system prompt (use processed version if provided)
             $systemPrompt = $processedSystemPrompt ?: $agent->system_prompt;
             if ($systemPrompt) {
+                // Enhance system prompt to include call end decision making and language awareness
+                $enhancedSystemPrompt = $systemPrompt;
+                
+                // Add language instruction if provided
+                if ($language) {
+                    $languageInstruction = "\n\nIMPORTANT LANGUAGE INSTRUCTION: Respond in the same language as the user input. The expected language is: {$language}. Maintain natural conversation flow in this language.";
+                    $enhancedSystemPrompt .= $languageInstruction;
+                }
+                
+                $enhancedSystemPrompt .= "\n\nIMPORTANT: You must respond in valid JSON format with two fields:\n1. \"response\" - your conversational response to the user\n2. \"call_end\" - boolean (true if the conversation should end, false to continue)\n\nDecide to end the call when:\n- User says goodbye, bye, hang up, or similar farewell\n- Conversation has naturally concluded\n- User indicates they're done or satisfied\n- You've completed the task or purpose of the call\n- Call has been going on for a very long time (over 20 exchanges)\n\nExample response format:\n{\"response\": \"Thank you for calling! Have a great day.\", \"call_end\": true}";
+                
                 $messages[] = [
                     'role' => 'system',
-                    'content' => $systemPrompt
+                    'content' => $enhancedSystemPrompt
                 ];
                 
-                Log::info('Using system prompt in OpenAI request', [
+                Log::info('Using enhanced system prompt with call end detection and language support', [
                     'agent_id' => $agent->id,
-                    'system_prompt' => $systemPrompt,
+                    'language' => $language,
+                    'original_system_prompt' => $systemPrompt,
                     'is_processed' => !is_null($processedSystemPrompt)
                 ]);
             }
@@ -110,11 +136,10 @@ class OpenAIService
                 'Authorization' => 'Bearer ' . $this->apiKey,
                 'Content-Type' => 'application/json',
             ])->post("{$this->baseUrl}/chat/completions", [
-                'model' => 'gpt-5-nano',
+                'model' => 'gpt-4o-mini',
                 'messages' => $messages,
-                // 'max_completion_tokens' => 150,
-                // 'temperature' => 0.7,
-                // 'stream' => false
+                'response_format' => ['type' => 'json_object'],
+                'temperature' => 0.7,
             ]);
 
             if ($response->successful()) {
@@ -122,11 +147,32 @@ class OpenAIService
                 $aiResponse = $result['choices'][0]['message']['content'] ?? null;
                 
                 if ($aiResponse) {
-                    return [
-                        'text' => $aiResponse,
-                        'usage' => $result['usage'] ?? null,
-                        'model' => $result['model'] ?? 'gpt-5-nano'
-                    ];
+                    // Try to parse JSON response
+                    $jsonResponse = json_decode($aiResponse, true);
+                    
+                    if ($jsonResponse && isset($jsonResponse['response'])) {
+                        return [
+                            'text' => $jsonResponse['response'],
+                            'call_end' => $jsonResponse['call_end'] ?? false,
+                            'usage' => $result['usage'] ?? null,
+                            'model' => $result['model'] ?? 'gpt-4o-mini',
+                            'raw_response' => $aiResponse
+                        ];
+                    } else {
+                        // Fallback if JSON parsing fails
+                        Log::warning('Failed to parse JSON response from OpenAI, using fallback', [
+                            'agent_id' => $agent->id,
+                            'raw_response' => $aiResponse
+                        ]);
+                        
+                        return [
+                            'text' => $aiResponse,
+                            'call_end' => false,
+                            'usage' => $result['usage'] ?? null,
+                            'model' => $result['model'] ?? 'gpt-4o-mini',
+                            'raw_response' => $aiResponse
+                        ];
+                    }
                 }
             }
 
